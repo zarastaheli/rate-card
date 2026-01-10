@@ -942,7 +942,7 @@ def generate_rate_card(job_dir, mapping_config, service_config):
     write_progress(job_dir, 'normalize', True)
     
     # Copy template to output location first to preserve file structure
-    template_path = Path('New Template - Rate Card.xlsx')
+    template_path = Path('Rate Card Template.xlsx')
     if not template_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_path}")
     
