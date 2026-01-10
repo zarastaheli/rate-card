@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Generating your rate card</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="page-container">
+    <div class="card card--tall">
+      <div class="card-content">
+        <div class="card-body">
+
+      <!-- Breadcrumb -->
+      <div class="breadcrumb">
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">1</span>
+          <span class="breadcrumb-label">Raw invoice</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">2</span>
+          <span class="breadcrumb-label">Normalize &amp; mapping</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">3</span>
+          <span class="breadcrumb-label">Redo carrier selection</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">4</span>
+          <span class="breadcrumb-label">Merchant service levels</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item active">
+          <span class="breadcrumb-number">5</span>
+          <span class="breadcrumb-label">Rate card</span>
+        </div>
+      </div>
+
+      <!-- Loading Content -->
+      <div class="loading-content">
+        <div class="spinner"></div>
+
+        <h1 class="loading-title">Generating Your Rate Card</h1>
+        <p class="loading-subtitle">This may take a few moments...</p>
+
+        <ul class="loading-steps">
+          <li class="loading-step" data-step="normalize">
+            <span class="loading-step-icon" aria-hidden="true"></span>
+            <span class="loading-step-label">Normalize your data</span>
+          </li>
+          <li class="loading-step" data-step="write_template">
+            <span class="loading-step-icon" aria-hidden="true"></span>
+            <span class="loading-step-label">Write into the template</span>
+          </li>
+          <li class="loading-step" data-step="finalize">
+            <span class="loading-step-icon" aria-hidden="true"></span>
+            <span class="loading-step-label">Save and finalize</span>
+          </li>
+        </ul>
+
+        <div class="loading-error" style="display:none; color:#b42318; margin-top:16px; font-weight:500;"></div>
+      </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function renderProgress(progress = {}) {
+      ["normalize", "write_template", "finalize"].forEach((key) => {
+        const step = document.querySelector(`.loading-step[data-step="${key}"]`);
+        if (!step) return;
+        const icon = step.querySelector(".loading-step-icon");
+        const done = Boolean(progress[key]);
+        step.classList.toggle("is-complete", done);
+        if (icon) {
+          icon.classList.toggle("is-complete", done);
+        }
+      });
+    }
+
+    function showError(message) {
+      const spinner = document.querySelector('.spinner');
+      const errorEl = document.querySelector('.loading-error');
+      if (spinner) spinner.style.display = 'none';
+      if (errorEl) {
+        errorEl.textContent = message || 'There was an error generating the rate card.';
+        errorEl.style.display = 'block';
+      }
+    }
+
+    async function pollStatus() {
+      const token = "{{ token }}";
+      try {
+        const res = await fetch(`/api/status/${token}`);
+        const data = await res.json();
+
+        if (data.progress) {
+          renderProgress(data.progress);
+        }
+
+        if (data.error) {
+          showError(data.error);
+          return;
+        }
+
+        if (data.ready) {
+          window.location = data.redirect_url;
+          return;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+
+      setTimeout(pollStatus, 800);
+    }
+
+    async function startGeneration() {
+      const token = "{{ token }}";
+      try {
+        await fetch('/api/generate', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ job_id: token })
+        });
+      } catch (e) {
+        showError('Error starting generation.');
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      startGeneration();
+      pollStatus();
+    });
+  </script>
+</body>
+</html>

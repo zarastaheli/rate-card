@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rate Card Generator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <!-- Progress Indicator -->
+            <div class="progress-indicator" id="progressIndicator">
+                <div class="step" data-step="1">
+                    <div class="step-circle">1</div>
+                    <span>Raw invoice</span>
+                </div>
+                <div class="step" data-step="2">
+                    <div class="step-circle">2</div>
+                    <span>Normalize & mapping</span>
+                </div>
+                <div class="step" data-step="3">
+                    <div class="step-circle">3</div>
+                    <span>Service levels</span>
+                </div>
+                <div class="step" data-step="4">
+                    <div class="step-circle">4</div>
+                    <span>Rate card</span>
+                </div>
+            </div>
+
+            <!-- Step 1: Upload -->
+            <div class="step-content" id="step1">
+                <h1>Upload Raw Invoice</h1>
+                <p class="subtitle">Upload your carrier invoice CSV file to begin</p>
+
+                <div class="inline-badge">
+                    <span class="inline-label">Detected structure:</span>
+                    <span class="badge" id="detectedStructure">Unknown</span>
+                </div>
+                
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">↑</div>
+                    <p>Click to upload or drag and drop</p>
+                    <p class="upload-hint">CSV files only (max 50MB)</p>
+                    <input type="file" id="fileInput" accept=".csv" style="display: none;">
+                </div>
+                
+                <div class="file-uploaded" id="fileUploaded" style="display: none;">
+                    <span class="checkmark">✓</span>
+                    <span>File uploaded</span>
+                    <div class="file-name" id="fileName"></div>
+                    <a href="#" id="replaceFile" class="replace-link">Replace file</a>
+                </div>
+                
+                <div id="uploadedInfo" style="display: none;">
+                    <div class="form-group">
+                        <label>Merchant name *</label>
+                        <input type="text" id="merchantName" placeholder="Enter merchant name" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="existingCustomer">
+                            Existing customer
+                        </label>
+                    </div>
+                    
+                    <div class="form-group" id="merchantIdGroup" style="display: none;">
+                        <label>Merchant ID *</label>
+                        <input type="text" id="merchantId" placeholder="Enter merchant ID">
+                    </div>
+                    
+                    <div class="form-group" id="originZipGroup" style="display: none;">
+                        <label>Origin ZIP *</label>
+                        <input type="text" id="originZip" placeholder="Enter origin ZIP code">
+                    </div>
+                </div>
+                
+                <div class="button-group split">
+                    <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+                    <button class="btn btn-primary" id="continueBtn1" disabled>Continue</button>
+                </div>
+            </div>
+
+            <!-- Step 2: Mapping -->
+            <div class="step-content" id="step2" style="display: none;">
+                <h1>Map Invoice Fields</h1>
+                <p class="instruction">Please map all required fields before continuing.</p>
+                
+                <div id="mappingTable"></div>
+                
+                <div class="button-group split">
+                    <button class="btn btn-secondary" id="backBtn2">Back</button>
+                    <button class="btn btn-primary" id="continueBtn2" disabled>Continue</button>
+                </div>
+            </div>
+
+            <!-- Step 3: Service Levels -->
+            <div class="step-content" id="step3" style="display: none;">
+                <h1>Choose Service Levels</h1>
+                <p class="subtitle" id="serviceLevelSubtitle">Select the services to qualify against for <span id="merchantNameDisplay"></span>.</p>
+                
+                <div class="service-search">
+                    <input type="text" id="serviceSearch" placeholder="Search services...">
+                </div>
+                
+                <div class="service-list" id="serviceList"></div>
+                
+                <div class="button-group split">
+                    <button class="btn btn-secondary" id="backBtn3">Back</button>
+                    <button class="btn btn-primary" id="continueBtn3" disabled>Generate rate card</button>
+                </div>
+            </div>
+
+            <!-- Step 4: Generating -->
+            <div class="step-content" id="step4" style="display: none;">
+                <h1>Generating Your Rate Card</h1>
+                <p class="subtitle">This may take a few moments...</p>
+                
+                <div class="loading-spinner"></div>
+                
+                <ul class="progress-steps">
+                    <li id="progressStep1">
+                        <span class="step-icon">○</span>
+                        Normalize your data
+                    </li>
+                    <li id="progressStep2">
+                        <span class="step-icon">○</span>
+                        Write into the template
+                    </li>
+                    <li id="progressStep3">
+                        <span class="step-icon">○</span>
+                        Save and finalize
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Step 5: Complete -->
+            <div class="step-content" id="step5" style="display: none;">
+                <div class="success-header">
+                    <span class="success-icon">✓</span>
+                    <h1>Rate Card Ready</h1>
+                </div>
+                <p class="subtitle">Your rate card has been generated successfully and is ready to download</p>
+                
+                <div class="rate-card-section">
+                    <div class="rate-card-box">
+                        <span>Rate card</span>
+                        <a href="#" id="downloadRateCard" class="btn btn-primary">
+                            <span>↓</span> Download rate card
+                        </a>
+                    </div>
+                    
+                    <div class="supporting-files">
+                        <button class="btn btn-link" id="toggleSupportingFiles">See supporting files</button>
+                        <div id="supportingFilesList" style="display: none;">
+                            <a href="#" id="downloadRawInvoice" class="file-link">Raw invoice CSV</a>
+                            <a href="#" id="downloadNormalized" class="file-link">Normalized / Raw Data CSV</a>
+                        </div>
+                        <a href="#" id="sharepointLink" class="sharepoint-link" target="_blank">
+                            View file in SharePoint <span>↗</span>
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="button-group split">
+                    <button class="btn btn-secondary" id="backBtn5">Back</button>
+                    <div class="button-cluster">
+                        <button class="btn btn-secondary" id="startOverBtn">Start over</button>
+                        <button class="btn btn-primary" id="finishBtn">Finish</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Label Cost warning -->
+    <div class="modal" id="labelCostModal" style="display: none;">
+        <div class="modal-content">
+            <h2>Cannot estimate savings</h2>
+            <p>Cannot estimate savings without mapping label cost</p>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" id="continueAnywayBtn">Continue anyway</button>
+                <button class="btn btn-primary" id="mapLabelCostBtn">Map label cost</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Merchant service levels</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <!-- Service Levels Selection -->
+  <div class="page-container">
+    <div class="card">
+      <div class="card-content">
+        <div class="card-body">
+      <!-- Breadcrumb -->
+      <div class="breadcrumb">
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">1</span>
+          <span class="breadcrumb-label">Raw invoice</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">2</span>
+          <span class="breadcrumb-label">Normalize &amp; mapping</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">3</span>
+          <span class="breadcrumb-label">Redo carrier selection</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item active">
+          <span class="breadcrumb-number">4</span>
+          <span class="breadcrumb-label">Merchant service levels</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item">
+          <span class="breadcrumb-number">5</span>
+          <span class="breadcrumb-label">Rate card</span>
+        </div>
+      </div>
+
+      <!-- Header -->
+      <div class="page-header">
+        <h1>Merchant Service Levels</h1>
+        <p class="subtitle">Select the shipping services to qualify against in your rate card</p>
+      </div>
+
+      <!-- Search Filter -->
+      <div class="form-field" style="margin-top: 24px;">
+        <input type="text" class="text-input" id="service-search" placeholder="Search services..." />
+      </div>
+
+      <!-- Service List -->
+      <div class="service-list" id="service-list" style="margin-top: 24px;">
+        {% for service in service_levels %}
+        <div class="service-item" data-service="{{ service }}">
+          <label class="service-checkbox-label">
+            <input type="checkbox" class="service-checkbox" value="{{ service }}"
+                   {% if service in selected_services %}checked{% endif %} />
+            <span class="service-name">{{ service }}</span>
+          </label>
+        </div>
+        {% endfor %}
+        </div>
+
+      <!-- Footer Buttons -->
+      <div class="button-row">
+        <button class="button button-secondary" type="button" id="back-btn">Back</button>
+        <button class="button button-primary" type="button" id="generate-btn">Generate rate card</button>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const jobId = '{{ job_id }}';
+    const serviceSearch = document.getElementById('service-search');
+    const serviceList = document.getElementById('service-list');
+    const serviceItems = serviceList.querySelectorAll('.service-item');
+    const generateBtn = document.getElementById('generate-btn');
+    const backBtn = document.getElementById('back-btn');
+
+    // Search filter
+    serviceSearch.addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      serviceItems.forEach(item => {
+        const serviceName = item.dataset.service.toLowerCase();
+        item.style.display = serviceName.includes(query) ? 'block' : 'none';
+      });
+    });
+
+    // Save selected services
+    generateBtn.addEventListener('click', () => {
+      const checkboxes = document.querySelectorAll('.service-checkbox:checked');
+      const selectedServices = Array.from(checkboxes).map(cb => cb.value);
+
+      fetch('/api/service-levels', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          job_id: jobId,
+          selected_services: selectedServices
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.error) {
+          alert('Error: ' + data.error);
+          return;
+        }
+        localStorage.setItem('selected_services', JSON.stringify(selectedServices));
+        window.location.href = `/loading?job_id=${jobId}`;
+      })
+      .catch(err => {
+        console.error('Service levels error:', err);
+        alert('Error saving service levels');
+      });
+    });
+
+    backBtn.addEventListener('click', () => {
+      window.location.href = `/redo-carriers?job_id=${jobId}`;
+    });
+  </script>
+</body>
+</html>

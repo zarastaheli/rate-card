@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rate card ready</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <!-- Screen 3: Rate card ready -->
+  <div class="page-container">
+    <div class="card card--tall">
+      <div class="card-content">
+        <div class="card-body balanced-body">
+      <!-- Breadcrumb -->
+      <div class="breadcrumb">
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">1</span>
+          <span class="breadcrumb-label">Raw invoice</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">2</span>
+          <span class="breadcrumb-label">Normalize &amp; mapping</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">3</span>
+          <span class="breadcrumb-label">Redo carrier selection</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">4</span>
+          <span class="breadcrumb-label">Merchant service levels</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item active">
+          <span class="breadcrumb-number">5</span>
+          <span class="breadcrumb-label">Rate card</span>
+        </div>
+      </div>
+
+      <!-- Header with Success Icon -->
+      <div class="page-header-with-icon">
+        <div class="success-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
+        </div>
+        <div class="header-content">
+          <h1>Rate Card Ready</h1>
+        </div>
+      </div>
+
+      <!-- Download Card -->
+      <div class="download-card">
+        <div class="download-info">
+          <h2>Rate card</h2>
+        </div>
+        <button class="button button-primary" type="button" id="download-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          Download
+        </button>
+      </div>
+
+      <!-- Action Links -->
+      <div class="action-row">
+        <a href="#" class="action-link action-link-pill" id="supporting-files-toggle">See supporting files</a>
+        <a href="#" class="action-link" id="sharepoint-link">
+          View file in SharePoint
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+        </a>
+      </div>
+
+      <!-- Supporting Files (hidden by default) -->
+      <div class="supporting-files-section" id="supporting-files-section" style="display: none; margin-top: 16px;">
+        <a href="/download/{{ job_id }}/raw-invoice" class="supporting-link">Raw invoice CSV</a>
+        <a href="/download/{{ job_id }}/normalized" class="supporting-link">Normalized / Raw Data CSV</a>
+      </div>
+
+      </div>
+
+      <!-- Footer Buttons -->
+      <div class="button-row button-row-footer">
+        <button class="button button-secondary" type="button" id="back-btn">Back</button>
+        <div class="button-group">
+          <button class="button button-secondary" type="button" id="start-over-btn">Start over</button>
+          <button class="button button-primary" type="button" id="finish-btn">Finish</button>
+        </div>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const jobId = '{{ job_id }}';
+    const merchantName = '{{ merchant_name }}';
+    const downloadBtn = document.getElementById('download-btn');
+    const sharepointLink = document.getElementById('sharepoint-link');
+    const supportingFilesToggle = document.getElementById('supporting-files-toggle');
+    const supportingFilesSection = document.getElementById('supporting-files-section');
+    const backBtn = document.getElementById('back-btn');
+    const startOverBtn = document.getElementById('start-over-btn');
+    const finishBtn = document.getElementById('finish-btn');
+
+    downloadBtn.addEventListener('click', () => {
+      window.location.href = `/download/${jobId}/rate-card`;
+    });
+
+    sharepointLink.href = `https://sharepoint.example.com?merchant=${encodeURIComponent(merchantName)}`;
+
+    supportingFilesToggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      const isVisible = supportingFilesSection.style.display !== 'none';
+      supportingFilesSection.style.display = isVisible ? 'none' : 'block';
+    });
+
+    backBtn.addEventListener('click', () => {
+      window.location.href = `/service-levels?job_id=${jobId}`;
+    });
+
+    startOverBtn.addEventListener('click', () => {
+      localStorage.clear();
+      window.location.href = '/';
+    });
+
+    finishBtn.addEventListener('click', () => {
+      localStorage.clear();
+      window.location.href = '/';
+    });
+  </script>
+</body>
+</html>

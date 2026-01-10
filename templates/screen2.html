@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Map invoice fields</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <!-- Screen 2: Map invoice fields -->
+  <div class="page-container">
+    <div class="card card--mapping">
+      <div class="card-content">
+        <div class="card-body">
+      <!-- Breadcrumb -->
+      <div class="breadcrumb">
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">1</span>
+          <span class="breadcrumb-label">Raw invoice</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item active">
+          <span class="breadcrumb-number">2</span>
+          <span class="breadcrumb-label">Normalize &amp; mapping</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item">
+          <span class="breadcrumb-number">3</span>
+          <span class="breadcrumb-label">Redo carrier selection</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item">
+          <span class="breadcrumb-number">4</span>
+          <span class="breadcrumb-label">Merchant service levels</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item">
+          <span class="breadcrumb-number">5</span>
+          <span class="breadcrumb-label">Rate card</span>
+        </div>
+      </div>
+
+      <!-- Header -->
+      <div class="page-header">
+        <h1>Map Invoice Fields</h1>
+        <p class="instruction">Please map all required fields before continuing.</p>
+      </div>
+
+      <!-- Warning Alert (hidden by default) -->
+      <div class="alert alert-warning" id="label-cost-warning" style="display: none;">
+        <svg class="alert-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+        <span>Label Cost is not mapped. Savings and spread cannot be calculated.</span>
+      </div>
+
+      <!-- Error Message (hidden by default) -->
+      <div class="error-message" id="global-error" style="display: none;">
+        Map all required fields before continuing.
+      </div>
+
+      <!-- Mapping Table -->
+      <div class="table-container">
+        <table class="mapping-table">
+          <thead>
+            <tr>
+              <th class="col-field-name">Standard field name</th>
+              <th class="col-invoice-column">Invoice column</th>
+              <th class="col-status">Status</th>
+            </tr>
+          </thead>
+          <tbody id="mapping-tbody">
+            <!-- Rows will be populated by JavaScript -->
+          </tbody>
+        </table>
+        </div>
+
+      <!-- Footer Buttons -->
+      <div class="button-row">
+        <button class="button button-secondary" type="button" id="back-btn">Back</button>
+        <button class="button button-primary" type="button" id="continue-btn">Continue</button>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for Label Cost warning -->
+  <div id="label-cost-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div style="background: white; padding: 24px; border-radius: 8px; max-width: 400px;">
+      <h2 style="margin-bottom: 16px; font-size: 20px;">Label Cost Not Mapped</h2>
+      <p style="margin-bottom: 24px; color: #6b7280;">Cannot estimate savings without mapping label cost.</p>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button class="button button-secondary" id="modal-continue-anyway">Continue anyway</button>
+        <button class="button button-primary" id="modal-map-label-cost">Map label cost</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const jobId = '{{ job_id }}';
+    const columns = {{ columns | tojson }};
+    const suggestions = {{ suggestions | tojson }};
+    const standardFields = {
+      required: {{ standard_fields.required | tojson }},
+      optional: {{ standard_fields.optional | tojson }}
+    };
+
+    const mappingTbody = document.getElementById('mapping-tbody');
+    const continueBtn = document.getElementById('continue-btn');
+    const backBtn = document.getElementById('back-btn');
+    const globalError = document.getElementById('global-error');
+    const labelCostWarning = document.getElementById('label-cost-warning');
+    const labelCostModal = document.getElementById('label-cost-modal');
+
+    const mappingState = {};
+    let labelCostRow = null;
+    let attemptedSubmit = false;
+
+    // Build mapping table
+    function buildMappingTable() {
+      // Required fields first
+      standardFields.required.forEach(field => {
+        const row = createMappingRow(field, true);
+        mappingTbody.appendChild(row);
+        if (field === 'Label Cost') {
+          labelCostRow = row;
+        }
+      });
+
+      // Optional fields
+      standardFields.optional.forEach(field => {
+        const row = createMappingRow(field, false);
+        mappingTbody.appendChild(row);
+        if (field === 'Label Cost') {
+          labelCostRow = row;
+        }
+      });
+    }
+
+    function createMappingRow(field, required) {
+      const tr = document.createElement('tr');
+      const suggested = suggestions[field];
+      const isSuggested = !!suggested;
+      
+      tr.className = `field-row ${isSuggested ? 'is-suggested' : ''}`;
+      tr.dataset.field = field;
+
+      // Field label
+      const tdLabel = document.createElement('td');
+      tdLabel.className = 'field-label mapping-label';
+      const labelSpan = document.createElement('span');
+      if (required) {
+        const asterisk = document.createElement('span');
+        asterisk.className = 'required-asterisk';
+        asterisk.textContent = '*';
+        labelSpan.appendChild(asterisk);
+        labelSpan.appendChild(document.createTextNode(' '));
+      }
+      labelSpan.appendChild(document.createTextNode(field));
+      tdLabel.appendChild(labelSpan);
+      tr.appendChild(tdLabel);
+
+      // Dropdown
+      const tdInput = document.createElement('td');
+      tdInput.className = 'field-input';
+      const inputGroup = document.createElement('div');
+      inputGroup.className = 'input-group';
+      
+      const select = document.createElement('select');
+      select.className = 'dropdown';
+      select.dataset.field = field;
+      
+      const emptyOption = document.createElement('option');
+      emptyOption.value = '';
+      emptyOption.textContent = 'Select column';
+      select.appendChild(emptyOption);
+
+      if (suggested) {
+        const suggestedOption = document.createElement('option');
+        suggestedOption.value = suggested;
+        suggestedOption.textContent = `★ ${suggested}`;
+        select.appendChild(suggestedOption);
+
+        const separator = document.createElement('option');
+        separator.disabled = true;
+        separator.textContent = '──────────';
+        select.appendChild(separator);
+      }
+
+      columns.forEach(col => {
+        if (suggested && col === suggested) {
+          return;
+        }
+        const option = document.createElement('option');
+        option.value = col;
+        option.textContent = col;
+        select.appendChild(option);
+      });
+
+      if (isSuggested) {
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'reset-link';
+        resetBtn.type = 'button';
+        resetBtn.textContent = 'Reset';
+        resetBtn.addEventListener('click', () => {
+          select.value = '';
+          updateRowState(tr, field, '');
+        });
+        inputGroup.appendChild(resetBtn);
+      }
+
+      inputGroup.insertBefore(select, inputGroup.firstChild);
+      tdInput.appendChild(inputGroup);
+      tr.appendChild(tdInput);
+
+      // Status
+      const tdStatus = document.createElement('td');
+      tdStatus.className = 'field-status';
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      if (isSuggested) {
+        badge.className += ' badge-suggested';
+        badge.textContent = 'Suggested';
+      }
+      tdStatus.appendChild(badge);
+      tr.appendChild(tdStatus);
+
+      // Event listeners
+      select.addEventListener('change', () => {
+        updateRowState(tr, field, select.value);
+        if (attemptedSubmit) {
+          validateMapping();
+        }
+      });
+
+      // Initialize state
+      mappingState[field] = '';
+      updateRowState(tr, field, '');
+
+      return tr;
+    }
+
+    function updateRowState(row, field, value) {
+      mappingState[field] = value;
+      
+      row.classList.remove('is-suggested', 'is-confirmed', 'is-error');
+      const badge = row.querySelector('.badge');
+      badge.className = 'badge';
+      badge.textContent = '';
+
+      if (value) {
+        row.classList.add('is-confirmed');
+        badge.className += ' badge-confirmed';
+        badge.textContent = 'Confirmed';
+      } else if (suggestions[field] && value === '') {
+        row.classList.add('is-suggested');
+        badge.className += ' badge-suggested';
+        badge.textContent = 'Suggested';
+      } else if (attemptedSubmit && standardFields.required.includes(field) && !value) {
+        row.classList.add('is-error');
+        badge.className += ' badge-required';
+        badge.textContent = 'Required';
+      }
+
+    }
+
+    function validateMapping() {
+      const missing = standardFields.required.filter(f => !mappingState[f] || mappingState[f] === '');
+      globalError.style.display = attemptedSubmit && missing.length > 0 ? 'block' : 'none';
+      labelCostWarning.style.display = 'none';
+
+      document.querySelectorAll('.field-row').forEach(row => {
+        const field = row.dataset.field;
+        updateRowState(row, field, mappingState[field]);
+      });
+      return missing;
+    }
+
+    continueBtn.addEventListener('click', () => {
+      attemptedSubmit = true;
+      const missing = validateMapping();
+      if (missing.length > 0) {
+        return;
+      }
+
+      const labelCostMapped = mappingState['Label Cost'] && mappingState['Label Cost'] !== '';
+      if (!labelCostMapped) {
+        labelCostModal.style.display = 'flex';
+        return;
+      }
+
+      submitMapping();
+    });
+
+    document.getElementById('modal-continue-anyway').addEventListener('click', () => {
+      labelCostModal.style.display = 'none';
+      submitMapping();
+    });
+
+    document.getElementById('modal-map-label-cost').addEventListener('click', () => {
+      labelCostModal.style.display = 'none';
+      if (labelCostRow) {
+        labelCostRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const select = labelCostRow.querySelector('.dropdown');
+        if (select) select.focus();
+      }
+    });
+
+    function submitMapping() {
+      // Get merchant info from localStorage
+      const merchantName = localStorage.getItem('merchant_name') || '';
+      const merchantId = localStorage.getItem('merchant_id') || '';
+      const existingCustomer = !!localStorage.getItem('merchant_id');
+      const originZip = localStorage.getItem('origin_zip') || '';
+      const structure = localStorage.getItem('detected_structure') || 'zone';
+
+      fetch('/api/mapping', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          job_id: jobId,
+          merchant_name: merchantName,
+          merchant_id: merchantId,
+          existing_customer: existingCustomer,
+          origin_zip: originZip,
+          structure: structure,
+          mapping: mappingState
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.error) {
+          alert('Error: ' + data.error);
+          return;
+        }
+
+        // Navigate to service levels
+        window.location.href = `/redo-carriers?job_id=${jobId}`;
+      })
+      .catch(err => {
+        console.error('Mapping error:', err);
+        alert('Error saving mapping');
+      });
+    }
+
+    backBtn.addEventListener('click', () => {
+      window.location.href = `/`;
+    });
+
+    // Initialize
+    buildMappingTable();
+    validateMapping();
+  </script>
+</body>
+</html>
