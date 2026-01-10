@@ -779,8 +779,10 @@ def mapping():
         normalized_df['PACKAGE_SIZE_STATUS'] = normalized_df['PACKAGE_DIMENSION_VOLUME'].apply(classify_package_size)
         normalized_df['WEIGHT_CLASSIFICATION'] = normalized_df['WEIGHT_IN_LBS'].apply(classify_weight)
 
-        origin_zip = extract_zip5(mapping_config.get('origin_zip'))
-        normalized_df['ORIGIN_ZIP_CODE'] = [origin_zip] * len(normalized_df)
+        origin_zip_value = ""
+        if structure == 'zip':
+            origin_zip_value = extract_zip5(origin_zip)
+        normalized_df['ORIGIN_ZIP_CODE'] = [origin_zip_value] * len(normalized_df)
         
         # Save normalized CSV
         normalized_csv_path = job_dir / 'normalized.csv'
@@ -1011,26 +1013,32 @@ def generate_rate_card(job_dir, mapping_config, service_config):
         'Order Date': 'DATE',
         'Zip': 'DESTINATION_ZIP_CODE',
         'Weight (oz)': 'WEIGHT_IN_OZ',
+        'WEIGHT_IN_LBS': 'WEIGHT_IN_LBS',
         'Shipping Carrier': 'SHIPPING_CARRIER',
-        'Shipping Service': 'SHIPPING_SERVICE',
+        'CLEANED_SHIPPING_SERVICE': 'CLEANED_SHIPPING_SERVICE',
         'Package Height': 'PACKAGE_HEIGHT',
         'Package Width': 'PACKAGE_WIDTH',
         'Package Length': 'PACKAGE_LENGTH',
-        'Zone': 'ZONE',
-        'Label Cost': 'LABEL_COST',
-        'WEIGHT_IN_LBS': 'WEIGHT_IN_LBS',
-        'TWO_LETTER_COUNTRY_CODE': 'TWO_LETTER_COUNTRY_CODE',
-        'CALCULATED_TWO_LETTER_COUNTRY_CODE': 'CALCULATED_TWO_LETTER_COUNTRY_CODE',
-        'FULL_COUNTRY_NAME': 'FULL_COUNTRY_NAME',
-        'CLEANED_SHIPPING_SERVICE': 'CLEANED_SHIPPING_SERVICE',
-        'SHIPPING_PRIORITY': 'SHIPPING_PRIORITY',
         'PACKAGE_DIMENSION_VOLUME': 'PACKAGE_DIMENSION_VOLUME',
-        'PACKAGE_SIZE_STATUS': 'PACKAGE_SIZE_STATUS',
-        'WEIGHT_CLASSIFICATION': 'WEIGHT_CLASSIFICATION',
-        'ORIGIN_ZIP_CODE': 'ORIGIN_ZIP_CODE'
+        'ORIGIN_ZIP_CODE': 'ORIGIN_ZIP_CODE',
+        'Shipping Service': 'SHIPPING_SERVICE',
+        'Label Cost': 'LABEL_COST',
+        'Zone': 'ZONE'
     }
 
-    missing_headers = [h for h in field_to_excel.values() if h not in header_to_col]
+    required_headers = {
+        'ORDER_NUMBER',
+        'DATE',
+        'DESTINATION_ZIP_CODE',
+        'WEIGHT_IN_OZ',
+        'WEIGHT_IN_LBS',
+        'SHIPPING_CARRIER',
+        'CLEANED_SHIPPING_SERVICE',
+        'SHIPPING_SERVICE',
+        'ZONE',
+        'QUALIFIED'
+    }
+    missing_headers = [h for h in required_headers if h not in header_to_col]
     if missing_headers:
         raise ValueError(f"Template missing required headers: {', '.join(sorted(missing_headers))}")
     
@@ -1043,6 +1051,22 @@ def generate_rate_card(job_dir, mapping_config, service_config):
 
     # Find starting row (skip header row)
     start_row = 2
+    table_min_col = None
+    table_max_col = None
+    table_max_row = None
+    if ws.tables:
+        table = next(iter(ws.tables.values()))
+        min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+        start_row = min_row + 1
+        table_min_col = min_col
+        table_max_col = max_col
+        table_max_row = max_row
+
+    if table_min_col is not None and table_max_col is not None:
+        for col_idx in range(table_min_col, table_max_col + 1):
+            cell_value = ws.cell(start_row, col_idx).value
+            if cell_value and str(cell_value).startswith('='):
+                formula_cols.add(col_idx)
     
     write_cols = set()
     for excel_col in field_to_excel.values():
@@ -1055,6 +1079,16 @@ def generate_rate_card(job_dir, mapping_config, service_config):
     if 'ORIGIN_ZIP_CODE' in header_to_col:
         write_cols.add(header_to_col['ORIGIN_ZIP_CODE'])
 
+    if table_max_row and write_cols:
+        for row_idx in range(start_row, table_max_row + 1):
+            for col_idx in write_cols:
+                if col_idx in formula_cols:
+                    continue
+                cell = ws.cell(row_idx, col_idx)
+                if cell.value and str(cell.value).startswith('='):
+                    continue
+                cell.value = None
+
     # Write data starting from row 2
     for idx, row in normalized_df.iterrows():
         excel_row = start_row + idx
@@ -1063,12 +1097,15 @@ def generate_rate_card(job_dir, mapping_config, service_config):
         for std_field, excel_col in field_to_excel.items():
             if std_field in normalized_df.columns and excel_col in header_to_col:
                 col_idx = header_to_col[excel_col]
-                # Only write if not a formula column
-                if col_idx not in formula_cols:
-                    value = row[std_field]
-                    # Handle NaN values
-                    if pd.isna(value):
-                        value = None
+                    # Only write if not a formula column
+                    if col_idx not in formula_cols:
+                        cell = ws.cell(excel_row, col_idx)
+                        if cell.value and str(cell.value).startswith('='):
+                            continue
+                        value = row[std_field]
+                        # Handle NaN values
+                        if pd.isna(value):
+                            value = None
                     else:
                         # Format dates
                         if std_field == 'Order Date' and excel_col == 'DATE':
