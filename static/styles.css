@@ -750,6 +750,12 @@ h1,
   gap: 8px;
 }
 
+.supporting-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .supporting-link {
   color: var(--link);
   text-decoration: none;

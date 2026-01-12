@@ -86,8 +86,10 @@
 
       <!-- Supporting Files (hidden by default) -->
       <div class="supporting-files-section" id="supporting-files-section" style="display: none; margin-top: 16px;">
-        <a href="/download/{{ job_id }}/raw-invoice" class="supporting-link">Raw invoice CSV</a>
-        <a href="/download/{{ job_id }}/normalized" class="supporting-link">Normalized / Raw Data CSV</a>
+        <div class="supporting-links">
+          <a href="/download/{{ job_id }}/raw-invoice" class="supporting-link">Raw invoice CSV</a>
+          <a href="/download/{{ job_id }}/normalized" class="supporting-link">Normalized / Raw Data CSV</a>
+        </div>
       </div>
 
       </div>
@@ -124,7 +126,7 @@
     supportingFilesToggle.addEventListener('click', (e) => {
       e.preventDefault();
       const isVisible = supportingFilesSection.style.display !== 'none';
-      supportingFilesSection.style.display = isVisible ? 'none' : 'block';
+      supportingFilesSection.style.display = isVisible ? 'none' : 'flex';
     });
 
     backBtn.addEventListener('click', () => {

@@ -12,6 +12,7 @@ from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file, session
 import pandas as pd
 import openpyxl
+from openpyxl.worksheet.formula import ArrayFormula
 from openpyxl.utils.cell import range_boundaries
 from werkzeug.utils import secure_filename
 
@@ -409,6 +410,27 @@ def update_pricing_summary_merchant_service_levels(ws, selected_services, normal
     for normalized, row_idx in existing.items():
         target_cell = ws.cell(row_idx, use_col)
         target_cell.value = 'Yes' if normalized in selected_normalized else 'No'
+
+    label_cell = ws.cell(header_row_idx + 1, label_col)
+    if isinstance(label_cell.value, ArrayFormula):
+        formula_text = label_cell.value.text
+        if formula_text and not formula_text.startswith('='):
+            formula_text = f"={formula_text}"
+        label_cell.value = formula_text
+        label_cell.data_type = 'f'
+        if hasattr(ws, "array_formulae"):
+            ws.array_formulae.pop(label_cell.coordinate, None)
+        if hasattr(ws, "_formula_attributes"):
+            ws._formula_attributes.pop(label_cell.coordinate, None)
+        row_idx = header_row_idx + 2
+        while True:
+            cell = ws.cell(row_idx, label_col)
+            normalized = normalize_redo_label(cell.value)
+            if not normalized or normalized in stop_titles:
+                break
+            if cell.value and not (isinstance(cell.value, str) and cell.value.startswith('=')):
+                cell.value = None
+            row_idx += 1
 
 def detect_structure(csv_path):
     """Detect if invoice is zone-based or zip-based"""
@@ -952,8 +974,23 @@ def generate():
         
         # Initialize progress
         progress_file = job_dir / 'progress.json'
+        estimated_seconds = None
+        normalized_csv = job_dir / 'normalized.csv'
+        if normalized_csv.exists():
+            try:
+                with open(normalized_csv, newline='') as f:
+                    rows = sum(1 for _ in f) - 1
+                rows = max(rows, 0)
+                estimated_seconds = max(5, min(180, int(rows * 0.05)))
+            except Exception:
+                estimated_seconds = None
+
+        progress_payload = {'started_at': datetime.utcnow().isoformat()}
+        if estimated_seconds is not None:
+            progress_payload['eta_seconds'] = estimated_seconds
+
         with open(progress_file, 'w') as f:
-            json.dump({}, f)
+            json.dump(progress_payload, f)
         
         def run_generation():
             try:
@@ -1150,20 +1187,28 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
                     continue
                 cell.value = None
 
+    column_data = {
+        field: normalized_df[field].tolist()
+        for field in field_to_excel.keys()
+        if field in normalized_df.columns
+    }
+    shipping_service_data = normalized_df['Shipping Service'].tolist() if 'Shipping Service' in normalized_df.columns else None
+    shipping_carrier_data = normalized_df['Shipping Carrier'].tolist() if 'Shipping Carrier' in normalized_df.columns else None
+
     # Write data starting from row 2
-    for idx, row in normalized_df.iterrows():
+    for idx in range(len(normalized_df)):
         excel_row = start_row + idx
         
         # Write mapped fields
         for std_field, excel_col in field_to_excel.items():
-            if std_field in normalized_df.columns and excel_col in header_to_col:
+            if std_field in column_data and excel_col in header_to_col:
                 col_idx = header_to_col[excel_col]
                 # Only write if not a formula column
                 if col_idx not in formula_cols:
                     cell = ws.cell(excel_row, col_idx)
                     if cell.value and str(cell.value).startswith('='):
                         continue
-                    value = row[std_field]
+                    value = column_data[std_field][idx]
                     # Handle NaN values
                     if pd.isna(value):
                         value = None
@@ -1232,9 +1277,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         if 'QUALIFIED' in header_to_col:
             col_idx = header_to_col['QUALIFIED']
             if col_idx not in formula_cols:
-                shipping_service = str(row.get('Shipping Service', ''))
+                shipping_service = str(shipping_service_data[idx]) if shipping_service_data is not None else ''
                 normalized_service = normalize_service_name(shipping_service)
-                carrier_value = row.get('Shipping Carrier', '')
+                carrier_value = shipping_carrier_data[idx] if shipping_carrier_data is not None else ''
                 carrier_normalized = normalize_merchant_carrier(carrier_value)
                 carrier_allowed = not carrier_normalized or carrier_normalized not in normalized_excluded
                 is_qualified = carrier_allowed and normalized_service in normalized_selected
@@ -1343,9 +1388,19 @@ def status(job_id=None):
             'progress': progress
         })
     
+    eta_remaining = None
+    if progress.get('started_at') and progress.get('eta_seconds'):
+        try:
+            started_at = datetime.fromisoformat(progress['started_at'])
+            elapsed = (datetime.utcnow() - started_at).total_seconds()
+            eta_remaining = max(0, int(progress['eta_seconds'] - elapsed))
+        except Exception:
+            eta_remaining = None
+
     return jsonify({
         'ready': False,
-        'progress': progress
+        'progress': progress,
+        'eta_seconds_remaining': eta_remaining
     })
 
 @app.route('/download/<job_id>/rate-card')

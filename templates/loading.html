@@ -47,7 +47,7 @@
         <div class="spinner"></div>
 
         <h1 class="loading-title">Generating Your Rate Card</h1>
-        <p class="loading-subtitle">This may take a few moments...</p>
+        <p class="loading-subtitle">Estimated time remaining: <span id="eta-remaining">60s</span></p>
 
         <ul class="loading-steps">
           <li class="loading-step" data-step="normalize">
@@ -103,6 +103,25 @@
 
         if (data.progress) {
           renderProgress(data.progress);
+        }
+
+        const etaEl = document.getElementById('eta-remaining');
+        if (etaEl) {
+          let seconds = null;
+          if (data.eta_seconds_remaining !== null && data.eta_seconds_remaining !== undefined) {
+            seconds = Math.max(1, data.eta_seconds_remaining);
+          } else if (data.progress && data.progress.eta_seconds) {
+            seconds = Math.max(1, data.progress.eta_seconds);
+          }
+          if (seconds === null) {
+            seconds = 60;
+          }
+          if (seconds < 60) {
+            etaEl.textContent = `${seconds}s`;
+          } else {
+            const minutes = Math.max(1, Math.round(seconds / 60));
+            etaEl.textContent = `${minutes}m`;
+          }
         }
 
         if (data.error) {
