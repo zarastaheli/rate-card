@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Redo carrier selection</title>
+  <title>Merchant pricing</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
@@ -25,12 +25,12 @@
           <span class="breadcrumb-label">Normalize &amp; mapping</span>
         </div>
         <div class="breadcrumb-separator"></div>
-        <div class="breadcrumb-item completed">
+        <div class="breadcrumb-item active">
           <span class="breadcrumb-number">3</span>
           <span class="breadcrumb-label">Merchant pricing</span>
         </div>
         <div class="breadcrumb-separator"></div>
-        <div class="breadcrumb-item active">
+        <div class="breadcrumb-item">
           <span class="breadcrumb-number">4</span>
           <span class="breadcrumb-label">Redo carriers</span>
         </div>
@@ -42,15 +42,21 @@
       </div>
 
       <div class="page-header">
-        <h1>Redo Carrier Selection</h1>
-        <p class="subtitle">Choose which Redo carriers to include for qualification</p>
+        <h1>Merchant pricing</h1>
+        <p class="subtitle">Choose which carriers to exclude in pricing.</p>
       </div>
 
-      <div class="section-block" style="margin-top: 16px;">
-        <h2 class="section-title">Detected carriers</h2>
-        <div class="service-list" id="selectable-list"></div>
-        <div class="empty-state" id="no-detected" style="display: none;">No additional carriers detected in this invoice.</div>
-        </div>
+      <div class="section-block">
+        <h2 class="section-title">Merchant carriers</h2>
+        <div class="service-list" id="carrier-list"></div>
+      </div>
+
+      <div class="section-block" style="margin-top: 24px;">
+        <h2 class="section-title">Merchant service levels</h2>
+        <p class="subtitle" style="margin-top: 4px;">Select which services to include in pricing.</p>
+        <div class="service-list" id="service-list" style="margin-top: 16px;"></div>
+        <div class="empty-state" id="no-services" style="display: none;">No service levels detected in this invoice.</div>
+      </div>
 
       <div class="button-row">
         <button class="button button-secondary" type="button" id="back-btn">Back</button>
@@ -62,12 +68,13 @@
 
   <script>
     const jobId = '{{ job_id }}';
-    const selectableList = document.getElementById('selectable-list');
-    const noDetected = document.getElementById('no-detected');
+    const carrierList = document.getElementById('carrier-list');
+    const serviceList = document.getElementById('service-list');
+    const noServices = document.getElementById('no-services');
     const continueBtn = document.getElementById('continue-btn');
     const backBtn = document.getElementById('back-btn');
 
-    function renderCarrierItem(name, checked, disabled) {
+    function renderCheckbox(name, checked = false) {
       const item = document.createElement('div');
       item.className = 'service-item';
 
@@ -79,7 +86,6 @@
       checkbox.className = 'service-checkbox';
       checkbox.value = name;
       checkbox.checked = checked;
-      checkbox.disabled = disabled;
 
       const span = document.createElement('span');
       span.className = 'service-name';
@@ -91,48 +97,65 @@
       return item;
     }
 
-    async function loadRedoCarriers() {
-      const response = await fetch(`/api/redo-carriers/${jobId}`);
+    async function loadMerchantPricing() {
+      const response = await fetch(`/api/merchant-pricing/${jobId}`);
       const data = await response.json();
       if (data.error) {
         alert(data.error);
         return;
       }
 
-      selectableList.innerHTML = '';
+      carrierList.innerHTML = '';
+      serviceList.innerHTML = '';
 
-      if (!data.selectable_carriers.length) {
-        noDetected.style.display = 'block';
+      const excluded = new Set(data.excluded_carriers || []);
+      data.carriers.forEach((name) => {
+        const checked = !excluded.has(name);
+        carrierList.appendChild(renderCheckbox(name, checked));
+      });
+
+      const included = new Set(data.included_services || []);
+      if (!data.service_levels.length) {
+        noServices.style.display = 'block';
       } else {
-        noDetected.style.display = 'none';
-        data.selectable_carriers.forEach(name => {
-          selectableList.appendChild(renderCarrierItem(name, false, false));
+        noServices.style.display = 'none';
+        data.service_levels.forEach((name) => {
+          const checked = included.has(name);
+          serviceList.appendChild(renderCheckbox(name, checked));
         });
       }
     }
 
     continueBtn.addEventListener('click', async () => {
-      const selected = Array.from(document.querySelectorAll('.service-checkbox:checked'))
+      const carrierChecks = carrierList.querySelectorAll('.service-checkbox');
+      const excluded = Array.from(carrierChecks)
+        .filter((input) => !input.checked)
         .map((input) => input.value);
 
-      const response = await fetch(`/api/redo-carriers/${jobId}`, {
+      const serviceChecks = serviceList.querySelectorAll('.service-checkbox:checked');
+      const included = Array.from(serviceChecks).map((input) => input.value);
+
+      const response = await fetch(`/api/merchant-pricing/${jobId}`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ selected_carriers: selected })
+        body: JSON.stringify({
+          excluded_carriers: excluded,
+          included_services: included
+        })
       });
       const data = await response.json();
       if (data.error) {
         alert(data.error);
         return;
       }
-      window.location.href = `/loading?job_id=${jobId}`;
+      window.location.href = `/redo-carriers?job_id=${jobId}`;
     });
 
     backBtn.addEventListener('click', () => {
-      window.location.href = `/merchant-pricing?job_id=${jobId}`;
+      window.location.href = `/mapping?job_id=${jobId}`;
     });
 
-    document.addEventListener('DOMContentLoaded', loadRedoCarriers);
+    document.addEventListener('DOMContentLoaded', loadMerchantPricing);
   </script>
 </body>
 </html>

@@ -29,12 +29,12 @@
         <div class="breadcrumb-separator"></div>
         <div class="breadcrumb-item completed">
           <span class="breadcrumb-number">3</span>
-          <span class="breadcrumb-label">Redo carrier selection</span>
+          <span class="breadcrumb-label">Merchant pricing</span>
         </div>
         <div class="breadcrumb-separator"></div>
         <div class="breadcrumb-item completed">
           <span class="breadcrumb-number">4</span>
-          <span class="breadcrumb-label">Merchant service levels</span>
+          <span class="breadcrumb-label">Redo carriers</span>
         </div>
         <div class="breadcrumb-separator"></div>
         <div class="breadcrumb-item active">
@@ -128,7 +128,7 @@
     });
 
     backBtn.addEventListener('click', () => {
-      window.location.href = `/service-levels?job_id=${jobId}`;
+      window.location.href = `/redo-carriers?job_id=${jobId}`;
     });
 
     startOverBtn.addEventListener('click', () => {

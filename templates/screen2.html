@@ -29,12 +29,12 @@
         <div class="breadcrumb-separator"></div>
         <div class="breadcrumb-item">
           <span class="breadcrumb-number">3</span>
-          <span class="breadcrumb-label">Redo carrier selection</span>
+          <span class="breadcrumb-label">Merchant pricing</span>
         </div>
         <div class="breadcrumb-separator"></div>
         <div class="breadcrumb-item">
           <span class="breadcrumb-number">4</span>
-          <span class="breadcrumb-label">Merchant service levels</span>
+          <span class="breadcrumb-label">Redo carriers</span>
         </div>
         <div class="breadcrumb-separator"></div>
         <div class="breadcrumb-item">
@@ -339,8 +339,8 @@
           return;
         }
 
-        // Navigate to service levels
-        window.location.href = `/redo-carriers?job_id=${jobId}`;
+        // Navigate to merchant pricing
+        window.location.href = `/merchant-pricing?job_id=${jobId}`;
       })
       .catch(err => {
         console.error('Mapping error:', err);

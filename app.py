@@ -550,9 +550,20 @@ def service_levels_page():
             selected_services = config.get('selected_services', [])
 
     return render_template('service_levels.html',
-                         job_id=job_id,
-                         service_levels=available_services,
-                         selected_services=selected_services)
+                          job_id=job_id,
+                          service_levels=available_services,
+                          selected_services=selected_services)
+
+@app.route('/merchant-pricing')
+def merchant_pricing_page():
+    """Render merchant pricing selection page"""
+    job_id = request.args.get('job_id')
+    if not job_id:
+        return "Missing job_id", 400
+    job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+    if not job_dir.exists():
+        return "Job not found", 404
+    return render_template('merchant_pricing.html', job_id=job_id)
 
 @app.route('/redo-carriers')
 def redo_carriers_page():
