@@ -135,6 +135,16 @@ def extract_zip5(value):
         return int(zip_match.group())
     return None
 
+def extract_origin_zip(value):
+    if value is None:
+        return None
+    digits = re.sub(r'\D', '', str(value))
+    if not digits:
+        return None
+    if len(digits) >= 5:
+        return int(digits[:5])
+    return int(digits)
+
 def to_float(value):
     try:
         if value is None or (isinstance(value, float) and pd.isna(value)):
@@ -645,6 +655,7 @@ def mapping():
         merchant_id = data.get('merchant_id', '')
         existing_customer = data.get('existing_customer', False)
         origin_zip = data.get('origin_zip', '')
+        annual_orders = data.get('annual_orders', '')
         mapping_config = data.get('mapping', {})
         
         if not job_id:
@@ -686,6 +697,7 @@ def mapping():
             'merchant_id': merchant_id,
             'existing_customer': existing_customer,
             'origin_zip': origin_zip,
+            'annual_orders': annual_orders,
             'mapping': mapping_config,
             'structure': structure,
             'zone_column': zone_col_name
@@ -774,9 +786,7 @@ def mapping():
         normalized_df['PACKAGE_SIZE_STATUS'] = normalized_df['PACKAGE_DIMENSION_VOLUME'].apply(classify_package_size)
         normalized_df['WEIGHT_CLASSIFICATION'] = normalized_df['WEIGHT_IN_LBS'].apply(classify_weight)
 
-        origin_zip_value = ""
-        if structure == 'zip':
-            origin_zip_value = extract_zip5(origin_zip)
+        origin_zip_value = extract_origin_zip(origin_zip)
         normalized_df['ORIGIN_ZIP_CODE'] = [origin_zip_value] * len(normalized_df)
         
         # Save normalized CSV
@@ -1126,10 +1136,8 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         write_cols.add(header_to_col['QUALIFIED'])
     if 'MERCHANT_ID' in header_to_col:
         write_cols.add(header_to_col['MERCHANT_ID'])
-    origin_zip_value = ""
-    if mapping_config.get('structure') == 'zip':
-        origin_zip_value = extract_zip5(mapping_config.get('origin_zip'))
-    if origin_zip_value and 'ORIGIN_ZIP_CODE' in header_to_col:
+    origin_zip_value = extract_origin_zip(mapping_config.get('origin_zip'))
+    if 'ORIGIN_ZIP_CODE' in header_to_col:
         write_cols.add(header_to_col['ORIGIN_ZIP_CODE'])
 
     if table_max_row and write_cols:
@@ -1155,12 +1163,12 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
                     cell = ws.cell(excel_row, col_idx)
                     if cell.value and str(cell.value).startswith('='):
                         continue
-                    if std_field == 'ORIGIN_ZIP_CODE' and not origin_zip_value:
-                        continue
                     value = row[std_field]
                     # Handle NaN values
                     if pd.isna(value):
                         value = None
+                    if std_field == 'ORIGIN_ZIP_CODE' and value is None and origin_zip_value is not None:
+                        value = origin_zip_value
                     else:
                         # Format dates
                         if std_field == 'Order Date' and excel_col == 'DATE':
@@ -1239,7 +1247,12 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         excluded_carriers = merchant_pricing.get('excluded_carriers', [])
         summary_ws = wb['Pricing & Summary']
         # Populate Annual Orders to avoid blank Deal Info calculations.
-        summary_ws['C9'] = 13968
+        annual_orders_value = mapping_config.get('annual_orders')
+        try:
+            annual_orders_value = int(float(annual_orders_value)) if annual_orders_value else None
+        except Exception:
+            annual_orders_value = None
+        summary_ws['C9'] = annual_orders_value if annual_orders_value is not None else 13968
         update_pricing_summary_redo_carriers(summary_ws, selected_redo)
         update_pricing_summary_merchant_carriers(summary_ws, excluded_carriers)
         update_pricing_summary_merchant_service_levels(

@@ -99,9 +99,12 @@
           <label class="field-label-inline" for="existing-customer">Existing customer</label>
         </div>
         <div class="form-field" id="origin-zip-field" style="display: none; margin-top: 16px;">
-          <label class="field-label" for="origin-zip">Origin ZIP <span class="required-asterisk">*</span></label>
+          <label class="field-label" for="origin-zip">Origin ZIP <span class="required-asterisk" id="origin-zip-asterisk">*</span></label>
           <input type="text" class="text-input" id="origin-zip" placeholder="Enter origin ZIP code" />
-          <p class="field-helper-text">Required for zip-based invoices</p>
+        </div>
+        <div class="form-field" id="annual-orders-field" style="display: none; margin-top: 16px;">
+          <label class="field-label" for="annual-orders">Annual orders</label>
+          <input type="number" class="text-input" id="annual-orders" placeholder="Enter annual orders" min="0" />
         </div>
         </div>
 
@@ -131,6 +134,9 @@
     const structurePill = document.getElementById('structure-pill');
     const originZipField = document.getElementById('origin-zip-field');
     const originZipInput = document.getElementById('origin-zip');
+    const originZipAsterisk = document.getElementById('origin-zip-asterisk');
+    const annualOrdersField = document.getElementById('annual-orders-field');
+    const annualOrdersInput = document.getElementById('annual-orders');
     const continueBtn = document.getElementById('continue-btn');
     const cancelBtn = document.getElementById('cancel-btn');
 
@@ -210,15 +216,18 @@
         if (detectedStructure === 'zone') {
           structurePill.textContent = 'Zone-based';
           structurePill.className = 'csv-structure-pill csv-structure-pill--zone';
-          originZipField.style.display = 'none';
+          originZipField.style.display = 'block';
+          originZipAsterisk.style.display = 'none';
         } else if (detectedStructure === 'zip') {
           structurePill.textContent = 'Zip-based';
           structurePill.className = 'csv-structure-pill csv-structure-pill--zip';
           originZipField.style.display = 'block';
+          originZipAsterisk.style.display = 'inline';
         } else {
           structurePill.textContent = 'Unknown';
           structurePill.className = 'csv-structure-pill csv-structure-pill--unknown';
         }
+        annualOrdersField.style.display = 'block';
 
         updateContinueButton();
       })
@@ -236,6 +245,7 @@
       merchantInfoSection.style.display = 'none';
       detectedStructureRow.style.display = 'none';
       originZipField.style.display = 'none';
+      annualOrdersField.style.display = 'none';
       jobId = null;
       updateContinueButton();
     });
@@ -262,18 +272,21 @@
     merchantNameInput.addEventListener('input', updateContinueButton);
     merchantIdInput.addEventListener('input', updateContinueButton);
     originZipInput.addEventListener('input', updateContinueButton);
+    annualOrdersInput.addEventListener('input', updateContinueButton);
 
     continueBtn.addEventListener('click', () => {
       if (continueBtn.disabled) return;
 
       const merchantName = merchantNameInput.value.trim();
       const merchantId = existingCustomerCheckbox.checked ? merchantIdInput.value.trim() : null;
-      const originZip = detectedStructure === 'zip' ? originZipInput.value.trim() : null;
+      const originZip = originZipInput.value.trim();
+      const annualOrders = annualOrdersInput.value.trim();
 
       // Save to localStorage
       localStorage.setItem('merchant_name', merchantName);
       if (merchantId) localStorage.setItem('merchant_id', merchantId);
       if (originZip) localStorage.setItem('origin_zip', originZip);
+      if (annualOrders) localStorage.setItem('annual_orders', annualOrders);
 
       // Navigate to mapping step
       window.location.href = `/mapping?job_id=${jobId}`;
