@@ -11,29 +11,35 @@ A Flask application for generating rate cards from raw carrier invoice CSV files
 - **Excel Generation**: Generates rate cards using template, preserving formulas
 - **Progress Tracking**: Real-time progress updates during generation
 
-## Setup
+## Local Setup
 
 ### Prerequisites
 
 - Python 3.8 or higher
 - pip
 
-### Installation
+### Install and run
 
-1. Create a virtual environment:
 ```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-2. Install dependencies:
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+python app.py
 ```
 
-3. Run the application:
-```bash
+Windows (PowerShell):
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 python app.py
+```
+
+Run tests (if present):
+
+```bash
+pytest
 ```
 
 The application will be available at `http://localhost:5000`
@@ -97,4 +103,3 @@ pytest --cov=. --cov-report=html
 ## License
 
 MIT
-

@@ -12,6 +12,7 @@ from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file, session
 import pandas as pd
 import openpyxl
+from openpyxl.utils.cell import range_boundaries
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
@@ -1110,9 +1111,9 @@ def generate_rate_card(job_dir, mapping_config, service_config):
                     if std_field == 'ORIGIN_ZIP_CODE' and not origin_zip_value:
                         continue
                     value = row[std_field]
-                        # Handle NaN values
-                        if pd.isna(value):
-                            value = None
+                    # Handle NaN values
+                    if pd.isna(value):
+                        value = None
                     else:
                         # Format dates
                         if std_field == 'Order Date' and excel_col == 'DATE':

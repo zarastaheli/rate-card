@@ -6,7 +6,7 @@ __pycache__/
 venv/
 env/
 ENV/
-.venv
+.venv/
 *.log
 .DS_Store
 *.bak
@@ -22,4 +22,3 @@ htmlcov/
 dist/
 build/
 *.egg-info/
-
