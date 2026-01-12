@@ -105,6 +105,7 @@ REDO_CARRIERS = [
 ]
 
 REDO_FORCED_ON = ['USPS Market', 'UPS Ground', 'UPS Ground Saver']
+MERCHANT_CARRIERS = ['USPS', 'UPS', 'FedEx', 'Amazon', 'DHL']
 
 def normalize_service_name(service):
     """Normalize service name for matching"""
@@ -835,6 +836,54 @@ def get_service_levels(job_id):
         available_services = available_merchant_services(raw_df, mapping_config)
 
         return jsonify({'available_services': available_services})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/merchant-pricing/<job_id>', methods=['GET', 'POST'])
+def merchant_pricing(job_id):
+    """Get or save merchant pricing selections."""
+    try:
+        job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+        if not job_dir.exists():
+            return jsonify({'error': 'Job not found'}), 404
+
+        pricing_file = job_dir / 'merchant_pricing.json'
+
+        if request.method == 'POST':
+            data = request.json or {}
+            excluded = data.get('excluded_carriers', [])
+            included = data.get('included_services', [])
+            if not isinstance(excluded, list) or not isinstance(included, list):
+                return jsonify({'error': 'Invalid payload'}), 400
+            payload = {
+                'excluded_carriers': excluded,
+                'included_services': included
+            }
+            with open(pricing_file, 'w') as f:
+                json.dump(payload, f)
+            return jsonify({'success': True})
+
+        saved = {'excluded_carriers': [], 'included_services': []}
+        if pricing_file.exists():
+            with open(pricing_file, 'r') as f:
+                saved = json.load(f)
+
+        mapping_file = job_dir / 'mapping.json'
+        if not mapping_file.exists():
+            return jsonify({'error': 'Mapping not found'}), 404
+
+        with open(mapping_file, 'r') as f:
+            mapping_config = json.load(f)
+
+        raw_df = pd.read_csv(job_dir / 'raw_invoice.csv')
+        available_services = available_merchant_services(raw_df, mapping_config)
+
+        return jsonify({
+            'carriers': MERCHANT_CARRIERS,
+            'service_levels': available_services,
+            'excluded_carriers': saved.get('excluded_carriers', []),
+            'included_services': saved.get('included_services', [])
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
