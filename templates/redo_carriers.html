@@ -100,13 +100,14 @@
       }
 
       selectableList.innerHTML = '';
+      const selected = new Set(data.selected_carriers || data.default_selected || []);
 
-      if (!data.selectable_carriers.length) {
+      if (!data.detected_carriers.length) {
         noDetected.style.display = 'block';
       } else {
         noDetected.style.display = 'none';
-        data.selectable_carriers.forEach(name => {
-          selectableList.appendChild(renderCarrierItem(name, false, false));
+        data.detected_carriers.forEach(name => {
+          selectableList.appendChild(renderCarrierItem(name, selected.has(name), false));
         });
       }
     }

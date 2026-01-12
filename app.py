@@ -909,9 +909,6 @@ def redo_carriers(job_id):
         data = request.json or {}
         selected = data.get('selected_carriers', [])
         selected = [c for c in selected if c in REDO_CARRIERS]
-        for forced in REDO_FORCED_ON:
-            if forced not in selected:
-                selected.append(forced)
         with open(job_dir / 'redo_carriers.json', 'w') as f:
             json.dump({'selected_carriers': selected}, f)
         return jsonify({'success': True})
@@ -925,12 +922,17 @@ def redo_carriers(job_id):
 
     raw_df = pd.read_csv(job_dir / 'raw_invoice.csv')
     detected = detect_redo_carriers(raw_df, mapping_config)
-    selectable = [c for c in detected if c not in REDO_FORCED_ON]
+    available = [c for c in REDO_CARRIERS if c in detected or c in REDO_FORCED_ON]
+    selected = REDO_FORCED_ON
+    redo_file = job_dir / 'redo_carriers.json'
+    if redo_file.exists():
+        with open(redo_file, 'r') as f:
+            saved = json.load(f)
+            selected = saved.get('selected_carriers', REDO_FORCED_ON)
 
     return jsonify({
-        'detected_carriers': detected,
-        'forced_on': REDO_FORCED_ON,
-        'selectable_carriers': selectable,
+        'detected_carriers': available,
+        'selected_carriers': selected,
         'default_selected': REDO_FORCED_ON
     })
 
