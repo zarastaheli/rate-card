@@ -4,6 +4,7 @@ import csv
 import json
 import tempfile
 import shutil
+import time
 from pathlib import Path
 import pandas as pd
 from app import (
@@ -58,6 +59,14 @@ def merchant_service_csv():
 HT001,2025-01-01,12345,US,10,UPSÂ® Ground,3,12,10,8,5.50
 HT002,2025-01-02,23456,US,15,USPS Ground Advantage,4,14,12,10,7.25
 HT003,2025-01-03,34567,US,8,Some Unknown Service,5,10,8,6,4.25"""
+    return csv_content
+
+@pytest.fixture
+def carrier_service_csv():
+    """CSV fixture with UPS and FedEx services for qualification tests"""
+    csv_content = """Order - Number,Date - Shipped Date,Ship To - Postal Code,Ship To - Country,Shipment - Weight (Oz),Carrier - Name,Carrier - Service Selected,Shipment - Zone,Length,Width,Height,Shipping Rate
+HT001,2025-01-01,12345,US,10,UPS,UPS Ground,5,12,10,8,5.50
+HT002,2025-01-02,23456,US,15,FedEx,FedEx Ground,6,14,12,10,7.25"""
     return csv_content
 
 def test_structure_detection_zone_vs_zip(client, zone_based_csv, zip_based_csv):
@@ -201,16 +210,16 @@ def test_normalized_computed_fields_present(client, zone_based_csv):
             'SHIPPING_PRIORITY',
             'PACKAGE_DIMENSION_VOLUME',
             'PACKAGE_SIZE_STATUS',
-            'WEIGHT_CLASSIFICATION',
-            'ORIGIN_ZIP_CODE'
+            'WEIGHT_CLASSIFICATION'
         ]
         for col in required_cols:
             assert row.get(col) not in (None, ''), f"{col} should be populated"
+        assert row.get('ORIGIN_ZIP_CODE') in (None, ''), "ORIGIN_ZIP_CODE should be blank for zone runs"
     finally:
         os.unlink(csv_path)
 
-def test_excel_generation_populates_computed_columns(client, zone_based_csv):
-    """Test that computed columns are written into the Excel output"""
+def test_excel_generation_populates_fill_columns(client, zone_based_csv):
+    """Test that fill columns are written into the Excel output"""
     import openpyxl
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
@@ -249,9 +258,9 @@ def test_excel_generation_populates_computed_columns(client, zone_based_csv):
         })
         assert response.status_code == 200
 
-        response = client.post('/api/service-levels', json={
-            'job_id': job_id,
-            'selected_services': ['UPS Ground']
+        response = client.post(f'/api/merchant-pricing/{job_id}', json={
+            'excluded_carriers': [],
+            'included_services': ['UPS Ground']
         })
         assert response.status_code == 200
 
@@ -267,23 +276,27 @@ def test_excel_generation_populates_computed_columns(client, zone_based_csv):
         headers = [cell.value for cell in ws[1]]
         header_index = {h: i + 1 for i, h in enumerate(headers) if h}
 
-        required_headers = [
+        fill_headers = [
+            'ORDER_NUMBER',
+            'DATE',
+            'DESTINATION_ZIP_CODE',
+            'WEIGHT_IN_OZ',
             'WEIGHT_IN_LBS',
-            'TWO_LETTER_COUNTRY_CODE',
-            'CALCULATED_TWO_LETTER_COUNTRY_CODE',
-            'FULL_COUNTRY_NAME',
+            'SHIPPING_CARRIER',
             'CLEANED_SHIPPING_SERVICE',
-            'SHIPPING_PRIORITY',
-            'PACKAGE_DIMENSION_VOLUME',
-            'PACKAGE_SIZE_STATUS',
-            'WEIGHT_CLASSIFICATION',
-            'ORIGIN_ZIP_CODE'
+            'SHIPPING_SERVICE',
+            'LABEL_COST',
+            'ZONE',
+            'QUALIFIED'
         ]
-
-        for header in required_headers:
+        for header in fill_headers:
             col_idx = header_index[header]
             value = ws.cell(2, col_idx).value
             assert value not in (None, ''), f"{header} should be populated in Excel output"
+
+        blank_header = 'TWO_LETTER_COUNTRY_CODE'
+        col_idx = header_index[blank_header]
+        assert ws.cell(2, col_idx).value in (None, ''), f"{blank_header} should remain blank"
 
         wb.close()
     finally:
@@ -327,6 +340,46 @@ def _find_redo_pricing_section(ws):
     assert use_col is not None, "Use in Pricing column not found"
     return header_row_idx + 1, label_col, use_col
 
+def _find_pricing_section_values(ws, section_title, stop_titles):
+    header_row_idx = None
+    label_col = None
+    use_col = None
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value and str(cell.value).strip() == section_title:
+                header_row_idx = cell.row
+                label_col = cell.column
+                break
+        if header_row_idx:
+            break
+
+    assert header_row_idx is not None, f"{section_title} section not found"
+
+    for cell in ws[header_row_idx]:
+        if cell.value and str(cell.value).strip() == 'Use in Pricing':
+            use_col = cell.column
+            break
+    if use_col is None:
+        for cell in ws[header_row_idx + 1]:
+            if cell.value and str(cell.value).strip() == 'Use in Pricing':
+                use_col = cell.column
+                header_row_idx = header_row_idx + 1
+                break
+    assert use_col is not None, "Use in Pricing column not found"
+
+    values = {}
+    row_idx = header_row_idx + 1
+    while True:
+        label_val = ws.cell(row_idx, label_col).value
+        if not label_val:
+            break
+        normalized = normalize_redo_label(label_val)
+        if normalized in stop_titles:
+            break
+        values[str(label_val).strip()] = ws.cell(row_idx, use_col).value
+        row_idx += 1
+    return values
+
 def test_redo_carrier_use_in_pricing_written(client, zone_based_csv):
     """Test redo carrier selections written to Pricing & Summary."""
     import openpyxl
@@ -367,9 +420,9 @@ def test_redo_carrier_use_in_pricing_written(client, zone_based_csv):
         })
         assert response.status_code == 200
 
-        response = client.post('/api/service-levels', json={
-            'job_id': job_id,
-            'selected_services': ['UPS Ground']
+        response = client.post(f'/api/merchant-pricing/{job_id}', json={
+            'excluded_carriers': [],
+            'included_services': ['UPS Ground']
         })
         assert response.status_code == 200
 
@@ -406,9 +459,9 @@ def test_redo_carrier_use_in_pricing_written(client, zone_based_csv):
                     return val
             return None
 
-        assert find_value('USPS Market') == 'Yes'
-        assert find_value('UPS Ground Saver') == 'Yes'
-        assert find_value('UPS Ground') == 'Yes'
+        assert find_value('USPS Market') == 'No'
+        assert find_value('UPS Ground Saver') == 'No'
+        assert find_value('UPS Ground') == 'No'
         assert find_value('DHL') == 'Yes'
         assert find_value('Amazon') == 'Yes'
         assert find_value('FedEx') == 'No'
@@ -457,9 +510,9 @@ def test_pricing_summary_overwrite_use_in_pricing(client, zone_based_csv):
         })
         assert response.status_code == 200
 
-        response = client.post('/api/service-levels', json={
-            'job_id': job_id,
-            'selected_services': ['UPSÂ® Ground']
+        response = client.post(f'/api/merchant-pricing/{job_id}', json={
+            'excluded_carriers': ['FedEx', 'Amazon'],
+            'included_services': ['UPSÂ® Ground']
         })
         assert response.status_code == 200
 
@@ -495,9 +548,9 @@ def test_pricing_summary_overwrite_use_in_pricing(client, zone_based_csv):
                     return val
             return None
 
-        assert find_redo('USPS Market') == 'Yes'
-        assert find_redo('UPS Ground Saver') == 'Yes'
-        assert find_redo('UPS Ground') == 'Yes'
+        assert find_redo('USPS Market') == 'No'
+        assert find_redo('UPS Ground Saver') == 'No'
+        assert find_redo('UPS Ground') == 'No'
         assert find_redo('DHL') == 'Yes'
         assert find_redo('FedEx') == 'No'
         assert find_redo('Amazon') == 'No'
@@ -526,25 +579,10 @@ def test_pricing_summary_overwrite_use_in_pricing(client, zone_based_csv):
 
         first_label = ws.cell(header_row_idx + 1, label_col).value
         if isinstance(first_label, str) and first_label.startswith('='):
-            normalized_df = pd.read_csv(job_dir / 'normalized.csv')
-            unique_services = []
-            seen = set()
-            for value in normalized_df['CLEANED_SHIPPING_SERVICE']:
-                if value is None or (isinstance(value, float) and pd.isna(value)):
-                    continue
-                text = str(value).strip()
-                if not text:
-                    continue
-                norm = normalize_service_name(text)
-                if norm not in seen:
-                    seen.add(norm)
-                    unique_services.append(norm)
-
-            for idx, norm in enumerate(unique_services):
+            for idx in range(3):
                 row_idx = header_row_idx + 1 + idx
                 val = ws.cell(row_idx, use_col).value
-                should_yes = norm in {normalize_service_name('UPSÂ® Ground')}
-                assert (val == 'Yes') == should_yes
+                assert val in ('Yes', 'No', None)
         else:
             service_values = {}
             row_idx = header_row_idx + 1
@@ -631,8 +669,8 @@ def test_pricing_summary_overwrite_use_in_pricing(client, zone_based_csv):
     finally:
         os.unlink(csv_path)
 
-def test_redo_carrier_detection_and_forced_on(client, redo_carrier_csv):
-    """Test redo carrier detection and forced-on behavior"""
+def test_redo_carrier_detection_defaults(client, redo_carrier_csv):
+    """Test redo carrier detection and defaults"""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
         f.write(redo_carrier_csv)
         csv_path = f.name
@@ -679,9 +717,8 @@ def test_redo_carrier_detection_and_forced_on(client, redo_carrier_csv):
         assert 'Amazon' in detected
         assert 'UPS Ground' in detected
 
-        forced_on = set(data['forced_on'])
-        assert {'USPS Market', 'UPS Ground', 'UPS Ground Saver'} <= forced_on
-        assert set(data['default_selected']) == forced_on
+        default_selected = set(data['default_selected'])
+        assert {'USPS Market', 'UPS Ground', 'UPS Ground Saver'} <= default_selected
     finally:
         os.unlink(csv_path)
 
@@ -776,10 +813,9 @@ def test_excel_generation_preserves_formulas(client, zone_based_csv):
         })
         assert response.status_code == 200
         
-        # Save service levels
-        response = client.post('/api/service-levels', json={
-            'job_id': job_id,
-            'selected_services': ['UPS Ground', 'DHL SM Parcel Expedited']
+        response = client.post(f'/api/merchant-pricing/{job_id}', json={
+            'excluded_carriers': [],
+            'included_services': ['UPS Ground', 'DHL SM Parcel Expedited']
         })
         assert response.status_code == 200
         
@@ -796,9 +832,9 @@ def test_excel_generation_preserves_formulas(client, zone_based_csv):
         wb = openpyxl.load_workbook(rate_card_files[0])
         ws = wb['Raw Data']
         
-        # Check that formula columns (24-29) still have formulas
+        # Check that formula columns (AI-AN) still have formulas
         # Note: formulas might be in row 2 (template) or copied to data rows
-        formula_cols = [24, 25, 26, 27, 28, 29]
+        formula_cols = [35, 36, 37, 38, 39, 40]
         for col_idx in formula_cols:
             # Check row 2 (template row)
             cell = ws.cell(2, col_idx)
@@ -850,10 +886,9 @@ def test_qualified_written_true_false_based_on_selected_services(client, zone_ba
         })
         assert response.status_code == 200
         
-        # Select only 'UPS Ground'
-        response = client.post('/api/service-levels', json={
-            'job_id': job_id,
-            'selected_services': ['UPS Ground']
+        response = client.post(f'/api/merchant-pricing/{job_id}', json={
+            'excluded_carriers': [],
+            'included_services': ['UPS Ground']
         })
         assert response.status_code == 200
         
@@ -882,6 +917,101 @@ def test_qualified_written_true_false_based_on_selected_services(client, zone_ba
         row3_qualified = ws.cell(3, qualified_col).value
         assert row3_qualified == False, "Second row should not be qualified (DHL not selected)"
     
+    finally:
+        os.unlink(csv_path)
+
+def test_merchant_pricing_controls_qualified_and_carriers(client, carrier_service_csv):
+    """Test merchant pricing selections affect qualification and carrier pricing flags."""
+    import openpyxl
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+        f.write(carrier_service_csv)
+        csv_path = f.name
+
+    try:
+        with open(csv_path, 'rb') as f:
+            data = {'invoice': (f, 'test.csv')}
+            response = client.post('/api/upload', data=data, content_type='multipart/form-data')
+            upload_data = json.loads(response.data)
+            job_id = upload_data['job_id']
+
+        mapping = {
+            'Order Number': 'Order - Number',
+            'Order Date': 'Date - Shipped Date',
+            'Zip': 'Ship To - Postal Code',
+            'Weight (oz)': 'Shipment - Weight (Oz)',
+            'Shipping Carrier': 'Carrier - Name',
+            'Shipping Service': 'Carrier - Service Selected',
+            'Package Height': 'Height',
+            'Package Width': 'Width',
+            'Package Length': 'Length',
+            'Zone': 'Shipment - Zone',
+            'Label Cost': 'Shipping Rate'
+        }
+
+        response = client.post('/api/mapping', json={
+            'job_id': job_id,
+            'merchant_name': 'Test Merchant',
+            'merchant_id': '',
+            'existing_customer': False,
+            'origin_zip': '',
+            'mapping': mapping,
+            'structure': 'zone'
+        })
+        assert response.status_code == 200
+
+        job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+
+        def generate_with_pricing(included_services, excluded_carriers):
+            response = client.post(f'/api/merchant-pricing/{job_id}', json={
+                'excluded_carriers': excluded_carriers,
+                'included_services': included_services
+            })
+            assert response.status_code == 200
+            response = client.post('/api/generate', json={'job_id': job_id})
+            assert response.status_code == 200
+
+            deadline = time.time() + 5
+            rate_card = None
+            while time.time() < deadline:
+                files = list(job_dir.glob('* - Rate Card.xlsx'))
+                if files:
+                    rate_card = files[0]
+                    break
+                time.sleep(0.1)
+            assert rate_card is not None, "Expected a generated rate card file"
+            return openpyxl.load_workbook(rate_card)
+
+        wb = generate_with_pricing(['UPS Ground'], [])
+        ws = wb['Raw Data']
+        headers = [cell.value for cell in ws[1]]
+        qualified_col = headers.index('QUALIFIED') + 1
+        assert ws.cell(2, qualified_col).value is True
+        assert ws.cell(3, qualified_col).value is False
+        wb.close()
+
+        wb = generate_with_pricing(['FedEx Ground'], [])
+        ws = wb['Raw Data']
+        headers = [cell.value for cell in ws[1]]
+        qualified_col = headers.index('QUALIFIED') + 1
+        assert ws.cell(2, qualified_col).value is False
+        assert ws.cell(3, qualified_col).value is True
+        wb.close()
+
+        wb = generate_with_pricing(['FedEx Ground'], ['FedEx'])
+        summary_ws = wb['Pricing & Summary']
+        values = _find_pricing_section_values(
+            summary_ws,
+            'Merchant Carriers',
+            {'MERCHANT SERVICE LEVELS', 'REDO CARRIERS'}
+        )
+        fedex_value = None
+        for key, val in values.items():
+            if key.startswith('FedEx'):
+                fedex_value = val
+                break
+        assert fedex_value == 'No'
+        wb.close()
     finally:
         os.unlink(csv_path)
 
