@@ -1262,6 +1262,8 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     write_progress(job_dir, 'finalize', True)
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.calcMode = "auto"
+    if hasattr(wb, "_calcChain"):
+        wb._calcChain = None
     
     # Save the workbook atomically
     temp_file = None
