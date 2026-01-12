@@ -1183,9 +1183,13 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
                 formula_cols.add(col_idx)
     
     write_cols = set()
-    for excel_col in field_to_excel.values():
-        if excel_col in header_to_col:
-            write_cols.add(header_to_col[excel_col])
+    write_fields = []
+    for std_field, excel_col in field_to_excel.items():
+        col_idx = header_to_col.get(excel_col)
+        if col_idx:
+            write_cols.add(col_idx)
+            if std_field in column_data:
+                write_fields.append((std_field, excel_col, col_idx))
     if 'QUALIFIED' in header_to_col:
         write_cols.add(header_to_col['QUALIFIED'])
     if 'MERCHANT_ID' in header_to_col:
@@ -1195,7 +1199,10 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         write_cols.add(header_to_col['ORIGIN_ZIP_CODE'])
 
     if table_max_row and write_cols:
-        for row_idx in range(start_row, table_max_row + 1):
+        clear_end_row = start_row + len(normalized_df) - 1
+        if table_max_row:
+            clear_end_row = min(clear_end_row, table_max_row)
+        for row_idx in range(start_row, clear_end_row + 1):
             for col_idx in write_cols:
                 if col_idx in formula_cols:
                     continue
@@ -1212,63 +1219,64 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     shipping_service_data = normalized_df['Shipping Service'].tolist() if 'Shipping Service' in normalized_df.columns else None
     shipping_carrier_data = normalized_df['Shipping Carrier'].tolist() if 'Shipping Carrier' in normalized_df.columns else None
 
+    numeric_cols = {
+        'WEIGHT_IN_OZ',
+        'WEIGHT_IN_LBS',
+        'PACKAGE_HEIGHT',
+        'PACKAGE_WIDTH',
+        'PACKAGE_LENGTH',
+        'PACKAGE_DIMENSION_VOLUME',
+        'LABEL_COST'
+    }
+
     # Write data starting from row 2
     for idx in range(len(normalized_df)):
         excel_row = start_row + idx
         
         # Write mapped fields
-        for std_field, excel_col in field_to_excel.items():
-            if std_field in column_data and excel_col in header_to_col:
-                col_idx = header_to_col[excel_col]
-                # Only write if not a formula column
-                if col_idx not in formula_cols:
-                    cell = ws.cell(excel_row, col_idx)
-                    if cell.value and str(cell.value).startswith('='):
-                        continue
-                    value = column_data[std_field][idx]
-                    # Handle NaN values
-                    if pd.isna(value):
-                        value = None
-                    if std_field == 'ORIGIN_ZIP_CODE' and value is None and origin_zip_value is not None:
-                        value = origin_zip_value
+        for std_field, excel_col, col_idx in write_fields:
+            # Only write if not a formula column
+            if col_idx in formula_cols:
+                continue
+            cell = ws.cell(excel_row, col_idx)
+            if cell.value and str(cell.value).startswith('='):
+                continue
+            value = column_data[std_field][idx]
+            # Handle NaN values
+            if pd.isna(value):
+                value = None
+            if std_field == 'ORIGIN_ZIP_CODE' and value is None and origin_zip_value is not None:
+                value = origin_zip_value
+            else:
+                # Format dates
+                if std_field == 'Order Date' and excel_col == 'DATE':
+                    try:
+                        # Try parsing with pandas
+                        if isinstance(value, str):
+                            value = pd.to_datetime(value)
+                        if hasattr(value, 'to_pydatetime'):
+                            value = value.to_pydatetime()
+                    except:
+                        pass
+                # Extract zip code (first 5 digits if longer)
+                elif std_field == 'Zip' and excel_col == 'DESTINATION_ZIP_CODE':
+                    zip_str = str(value).strip()
+                    # Extract first 5 digits
+                    zip_match = re.search(r'\d{5}', zip_str)
+                    if zip_match:
+                        value = int(zip_match.group())
                     else:
-                        # Format dates
-                        if std_field == 'Order Date' and excel_col == 'DATE':
-                            try:
-                                # Try parsing with pandas
-                                if isinstance(value, str):
-                                    value = pd.to_datetime(value)
-                                if hasattr(value, 'to_pydatetime'):
-                                    value = value.to_pydatetime()
-                            except:
-                                pass
-                        # Extract zip code (first 5 digits if longer)
-                        elif std_field == 'Zip' and excel_col == 'DESTINATION_ZIP_CODE':
-                            zip_str = str(value).strip()
-                            # Extract first 5 digits
-                            zip_match = re.search(r'\d{5}', zip_str)
-                            if zip_match:
-                                value = int(zip_match.group())
-                            else:
-                                value = None
-                        # Ensure numeric types for numeric columns
-                        elif excel_col in [
-                            'WEIGHT_IN_OZ',
-                            'WEIGHT_IN_LBS',
-                            'PACKAGE_HEIGHT',
-                            'PACKAGE_WIDTH',
-                            'PACKAGE_LENGTH',
-                            'PACKAGE_DIMENSION_VOLUME',
-                            'LABEL_COST'
-                        ]:
-                            try:
-                                value = float(value) if value else None
-                            except:
-                                value = None
-                    
-                    # Only write non-None values to avoid breaking Excel structure
-                    if value is not None:
-                        ws.cell(excel_row, col_idx, value)
+                        value = None
+                # Ensure numeric types for numeric columns
+                elif excel_col in numeric_cols:
+                    try:
+                        value = float(value) if value else None
+                    except:
+                        value = None
+            
+            # Only write non-None values to avoid breaking Excel structure
+            if value is not None:
+                ws.cell(excel_row, col_idx, value)
         
         # Zone is now handled through the mapping like other fields
         # But if it's zone-based and zone wasn't mapped, try to get it from raw CSV
