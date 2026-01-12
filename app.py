@@ -93,18 +93,19 @@ SERVICE_LEVELS = [
 ]
 
 REDO_CARRIERS = [
-    'First Mile 2-5 Days',
-    'USPS Market',
-    'UPS Ground',
-    'UPS Ground Saver',
-    'FedEx',
-    'Amazon',
-    'First Mile 1-3 Days',
-    'First Mile 3-8 Days',
-    'DHL'
+    "USPS Market",
+    "UPS Ground (Best Guess at Shipstation's Rates)",
+    "UPS Ground Saver (Best Guess of Shipstation's Rates)",
+    "FedEx",
+    "Amazon",
+    "DHL"
 ]
 
-REDO_FORCED_ON = ['USPS Market', 'UPS Ground', 'UPS Ground Saver']
+REDO_FORCED_ON = [
+    "USPS Market",
+    "UPS Ground (Best Guess at Shipstation's Rates)",
+    "UPS Ground Saver (Best Guess of Shipstation's Rates)"
+]
 MERCHANT_CARRIERS = ['USPS', 'UPS', 'FedEx', 'Amazon', 'DHL']
 
 def normalize_service_name(service):
@@ -341,15 +342,7 @@ def update_pricing_summary_redo_carriers(ws, selected_redo_carriers):
     stop_titles = {'MERCHANT CARRIERS', 'MERCHANT CARRIER', 'MERCHANT SERVICE LEVELS'}
     for row_idx, label_val in _iter_section_rows(ws, header_row_idx + 1, label_col, stop_titles):
         normalized = normalize_redo_label(label_val)
-        canonical = None
-        if normalized.startswith('UPS GROUND SAVER'):
-            canonical = 'UPS Ground Saver'
-        elif normalized.startswith('UPS GROUND'):
-            canonical = 'UPS Ground'
-        elif normalized.startswith('USPS MARKET'):
-            canonical = 'USPS Market'
-        else:
-            canonical = canonical_map.get(normalized)
+        canonical = canonical_map.get(normalized)
 
         target_cell = ws.cell(row_idx, use_col)
         target_cell.value = 'Yes' if canonical in selected else 'No'
@@ -909,20 +902,18 @@ def redo_carriers(job_id):
     with open(mapping_file, 'r') as f:
         mapping_config = json.load(f)
 
-    raw_df = pd.read_csv(job_dir / 'raw_invoice.csv')
-    detected = detect_redo_carriers(raw_df, mapping_config)
-    available = [c for c in REDO_CARRIERS if c in detected or c in REDO_FORCED_ON]
-    selected = REDO_FORCED_ON
+    available = list(REDO_CARRIERS)
+    selected = list(REDO_FORCED_ON)
     redo_file = job_dir / 'redo_carriers.json'
     if redo_file.exists():
         with open(redo_file, 'r') as f:
             saved = json.load(f)
-            selected = saved.get('selected_carriers', REDO_FORCED_ON)
+            selected = saved.get('selected_carriers', list(REDO_FORCED_ON))
 
     return jsonify({
         'detected_carriers': available,
         'selected_carriers': selected,
-        'default_selected': REDO_FORCED_ON
+        'default_selected': list(REDO_FORCED_ON)
     })
 
 @app.route('/api/generate', methods=['POST'])

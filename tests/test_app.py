@@ -670,7 +670,7 @@ def test_pricing_summary_overwrite_use_in_pricing(client, zone_based_csv):
         os.unlink(csv_path)
 
 def test_redo_carrier_detection_defaults(client, redo_carrier_csv):
-    """Test redo carrier detection and defaults"""
+    """Test redo carrier defaults"""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
         f.write(redo_carrier_csv)
         csv_path = f.name
@@ -712,13 +712,22 @@ def test_redo_carrier_detection_defaults(client, redo_carrier_csv):
         data = json.loads(response.data)
 
         detected = set(data['detected_carriers'])
-        assert 'First Mile 1-3 Days' in detected
-        assert 'DHL' in detected
-        assert 'Amazon' in detected
-        assert 'UPS Ground' in detected
+        expected = {
+            "USPS Market",
+            "UPS Ground (Best Guess at Shipstation's Rates)",
+            "UPS Ground Saver (Best Guess of Shipstation's Rates)",
+            "FedEx",
+            "Amazon",
+            "DHL"
+        }
+        assert detected == expected
 
         default_selected = set(data['default_selected'])
-        assert {'USPS Market', 'UPS Ground', 'UPS Ground Saver'} <= default_selected
+        assert default_selected == {
+            "USPS Market",
+            "UPS Ground (Best Guess at Shipstation's Rates)",
+            "UPS Ground Saver (Best Guess of Shipstation's Rates)"
+        }
     finally:
         os.unlink(csv_path)
 
