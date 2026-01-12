@@ -1238,6 +1238,8 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         selected_services = merchant_pricing.get('included_services', [])
         excluded_carriers = merchant_pricing.get('excluded_carriers', [])
         summary_ws = wb['Pricing & Summary']
+        # Populate Annual Orders to avoid blank Deal Info calculations.
+        summary_ws['C9'] = 13968
         update_pricing_summary_redo_carriers(summary_ws, selected_redo)
         update_pricing_summary_merchant_carriers(summary_ws, excluded_carriers)
         update_pricing_summary_merchant_service_levels(
@@ -1258,6 +1260,8 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     
     # Step 3: Save and finalize
     write_progress(job_dir, 'finalize', True)
+    wb.calculation.fullCalcOnLoad = True
+    wb.calculation.calcMode = "auto"
     
     # Save the workbook atomically
     temp_file = None
