@@ -1035,6 +1035,8 @@ def generate_rate_card(job_dir, mapping_config, service_config):
         'SHIPPING_CARRIER',
         'CLEANED_SHIPPING_SERVICE',
         'SHIPPING_SERVICE',
+        'LABEL_COST',
+        'MERCHANT_ID',
         'ZONE',
         'QUALIFIED'
     }
@@ -1046,8 +1048,8 @@ def generate_rate_card(job_dir, mapping_config, service_config):
     selected_services = service_config.get('selected_services', [])
     normalized_selected = [normalize_service_name(s) for s in selected_services]
     
-    # Identify formula columns (columns 24-29, indices 23-28, 1-indexed)
-    formula_cols = set(range(24, 30))
+    # Identify formula columns (AI-AN, 1-indexed)
+    formula_cols = set(range(35, 41))
 
     # Find starting row (skip header row)
     start_row = 2
@@ -1076,7 +1078,10 @@ def generate_rate_card(job_dir, mapping_config, service_config):
         write_cols.add(header_to_col['QUALIFIED'])
     if 'MERCHANT_ID' in header_to_col:
         write_cols.add(header_to_col['MERCHANT_ID'])
-    if 'ORIGIN_ZIP_CODE' in header_to_col:
+    origin_zip_value = ""
+    if mapping_config.get('structure') == 'zip':
+        origin_zip_value = extract_zip5(mapping_config.get('origin_zip'))
+    if origin_zip_value and 'ORIGIN_ZIP_CODE' in header_to_col:
         write_cols.add(header_to_col['ORIGIN_ZIP_CODE'])
 
     if table_max_row and write_cols:
@@ -1097,12 +1102,14 @@ def generate_rate_card(job_dir, mapping_config, service_config):
         for std_field, excel_col in field_to_excel.items():
             if std_field in normalized_df.columns and excel_col in header_to_col:
                 col_idx = header_to_col[excel_col]
-                    # Only write if not a formula column
-                    if col_idx not in formula_cols:
-                        cell = ws.cell(excel_row, col_idx)
-                        if cell.value and str(cell.value).startswith('='):
-                            continue
-                        value = row[std_field]
+                # Only write if not a formula column
+                if col_idx not in formula_cols:
+                    cell = ws.cell(excel_row, col_idx)
+                    if cell.value and str(cell.value).startswith('='):
+                        continue
+                    if std_field == 'ORIGIN_ZIP_CODE' and not origin_zip_value:
+                        continue
+                    value = row[std_field]
                         # Handle NaN values
                         if pd.isna(value):
                             value = None
