@@ -714,8 +714,8 @@ def test_redo_carrier_detection_defaults(client, redo_carrier_csv):
         detected = set(data['detected_carriers'])
         expected = {
             "USPS Market",
-            "UPS Ground (Best Guess at Shipstation's Rates)",
-            "UPS Ground Saver (Best Guess of Shipstation's Rates)",
+            "UPS Ground",
+            "UPS Ground Saver",
             "FedEx",
             "Amazon",
             "DHL"
@@ -725,8 +725,8 @@ def test_redo_carrier_detection_defaults(client, redo_carrier_csv):
         default_selected = set(data['default_selected'])
         assert default_selected == {
             "USPS Market",
-            "UPS Ground (Best Guess at Shipstation's Rates)",
-            "UPS Ground Saver (Best Guess of Shipstation's Rates)"
+            "UPS Ground",
+            "UPS Ground Saver"
         }
     finally:
         os.unlink(csv_path)

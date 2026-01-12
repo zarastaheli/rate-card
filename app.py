@@ -95,8 +95,8 @@ SERVICE_LEVELS = [
 
 REDO_CARRIERS = [
     "USPS Market",
-    "UPS Ground (Best Guess at Shipstation's Rates)",
-    "UPS Ground Saver (Best Guess of Shipstation's Rates)",
+    "UPS Ground",
+    "UPS Ground Saver",
     "FedEx",
     "Amazon",
     "DHL"
@@ -104,10 +104,28 @@ REDO_CARRIERS = [
 
 REDO_FORCED_ON = [
     "USPS Market",
-    "UPS Ground (Best Guess at Shipstation's Rates)",
-    "UPS Ground Saver (Best Guess of Shipstation's Rates)"
+    "UPS Ground",
+    "UPS Ground Saver"
 ]
 MERCHANT_CARRIERS = ['USPS', 'UPS', 'FedEx', 'Amazon', 'DHL']
+
+def default_included_services(services):
+    if not services:
+        return []
+    exclude_tokens = {'PRIORITY', 'NEXT', '2ND', 'SECOND'}
+    international_tokens = {'INTERNATIONAL', 'INTL'}
+    included = []
+    for service in services:
+        normalized = normalize_service_name(service)
+        if any(token in normalized for token in international_tokens):
+            continue
+        if any(token in normalized for token in exclude_tokens):
+            if 'DHL' in normalized and 'EXPEDITED' in normalized:
+                included.append(service)
+                continue
+            continue
+        included.append(service)
+    return included
 
 def normalize_service_name(service):
     """Normalize service name for matching"""
@@ -405,32 +423,25 @@ def update_pricing_summary_merchant_service_levels(ws, selected_services, normal
     )
     if header_row_idx is None:
         return
-    existing = {normalize_service_name(label): row for row, label in rows}
+    services = _unique_cleaned_services(normalized_df)
+    if not services:
+        services = SERVICE_LEVELS
 
-    for normalized, row_idx in existing.items():
-        target_cell = ws.cell(row_idx, use_col)
-        target_cell.value = 'Yes' if normalized in selected_normalized else 'No'
+    row_idx = header_row_idx + 1
+    for service in services:
+        ws.cell(row_idx, label_col, service)
+        normalized = normalize_service_name(service)
+        ws.cell(row_idx, use_col, 'Yes' if normalized in selected_normalized else 'No')
+        row_idx += 1
 
-    label_cell = ws.cell(header_row_idx + 1, label_col)
-    if isinstance(label_cell.value, ArrayFormula):
-        formula_text = label_cell.value.text
-        if formula_text and not formula_text.startswith('='):
-            formula_text = f"={formula_text}"
-        label_cell.value = formula_text
-        label_cell.data_type = 'f'
-        if hasattr(ws, "array_formulae"):
-            ws.array_formulae.pop(label_cell.coordinate, None)
-        if hasattr(ws, "_formula_attributes"):
-            ws._formula_attributes.pop(label_cell.coordinate, None)
-        row_idx = header_row_idx + 2
-        while True:
-            cell = ws.cell(row_idx, label_col)
-            normalized = normalize_redo_label(cell.value)
-            if not normalized or normalized in stop_titles:
-                break
-            if cell.value and not (isinstance(cell.value, str) and cell.value.startswith('=')):
-                cell.value = None
-            row_idx += 1
+    while True:
+        cell = ws.cell(row_idx, label_col)
+        normalized = normalize_redo_label(cell.value)
+        if not normalized or normalized in stop_titles:
+            break
+        cell.value = None
+        ws.cell(row_idx, use_col, None)
+        row_idx += 1
 
 def detect_structure(csv_path):
     """Detect if invoice is zone-based or zip-based"""
@@ -889,9 +900,11 @@ def merchant_pricing(job_id):
             return jsonify({'success': True})
 
         saved = {'excluded_carriers': [], 'included_services': []}
+        has_saved = False
         if pricing_file.exists():
             with open(pricing_file, 'r') as f:
                 saved = json.load(f)
+            has_saved = True
 
         mapping_file = job_dir / 'mapping.json'
         if not mapping_file.exists():
@@ -903,11 +916,15 @@ def merchant_pricing(job_id):
         raw_df = pd.read_csv(job_dir / 'raw_invoice.csv')
         available_services = available_merchant_services(raw_df, mapping_config)
 
+        included_services = saved.get('included_services', [])
+        if not has_saved and not included_services:
+            included_services = default_included_services(available_services)
+
         return jsonify({
             'carriers': MERCHANT_CARRIERS,
             'service_levels': available_services,
             'excluded_carriers': saved.get('excluded_carriers', []),
-            'included_services': saved.get('included_services', [])
+            'included_services': included_services
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
