@@ -253,6 +253,22 @@ def normalize_redo_label(label):
     text = re.sub(r'\s+', ' ', text)
     return text.upper().strip()
 
+def normalize_merchant_carrier(value):
+    text = normalize_redo_label(value)
+    if not text:
+        return ""
+    if 'USPS' in text or 'POSTAL' in text:
+        return 'USPS'
+    if 'UPS' in text:
+        return 'UPS'
+    if 'FEDEX' in text:
+        return 'FEDEX'
+    if 'AMAZON' in text:
+        return 'AMAZON'
+    if 'DHL' in text:
+        return 'DHL'
+    return ""
+
 def _find_pricing_section(ws, section_title):
     title_cell = None
     for row in ws.iter_rows():
@@ -315,9 +331,7 @@ def _scan_section_rows(ws, section_title, stop_titles):
 
 def update_pricing_summary_redo_carriers(ws, selected_redo_carriers):
     """Update Use in Pricing for Redo Carriers section."""
-    forced_on = set(REDO_FORCED_ON)
     selected = set(selected_redo_carriers or [])
-    selected |= forced_on
     canonical_map = {normalize_redo_label(c): c for c in REDO_CARRIERS}
 
     header_row_idx, label_col, use_col = _find_pricing_section(ws, 'Redo Carriers')
@@ -340,25 +354,9 @@ def update_pricing_summary_redo_carriers(ws, selected_redo_carriers):
         target_cell = ws.cell(row_idx, use_col)
         target_cell.value = 'Yes' if canonical in selected else 'No'
 
-def update_pricing_summary_merchant_carriers(ws, selected_redo_carriers):
+def update_pricing_summary_merchant_carriers(ws, excluded_carriers):
     """Update Use in Pricing for Merchant Carriers section."""
-    forced_on = set(REDO_FORCED_ON)
-    selected = set(selected_redo_carriers or [])
-    selected |= forced_on
-
-    carrier_on = set()
-    if 'USPS Market' in selected:
-        carrier_on.add('USPS')
-    if 'UPS Ground' in selected or 'UPS Ground Saver' in selected:
-        carrier_on.add('UPS')
-    if 'DHL' in selected:
-        carrier_on.add('DHL')
-    if 'Amazon' in selected:
-        carrier_on.add('AMAZON')
-    if 'FedEx' in selected:
-        carrier_on.add('FEDEX')
-    if any(c.startswith('First Mile') for c in selected):
-        carrier_on.add('FIRST MILE')
+    excluded = {normalize_merchant_carrier(c) for c in (excluded_carriers or [])}
 
     header_row_idx, label_col, use_col = _find_pricing_section(ws, 'Merchant Carriers')
     if header_row_idx is None:
@@ -366,9 +364,15 @@ def update_pricing_summary_merchant_carriers(ws, selected_redo_carriers):
 
     stop_titles = {'MERCHANT SERVICE LEVELS', 'REDO CARRIERS'}
     for row_idx, label_val in _iter_section_rows(ws, header_row_idx + 1, label_col, stop_titles):
-        normalized = normalize_redo_label(label_val)
+        label_norm = normalize_redo_label(label_val)
         target_cell = ws.cell(row_idx, use_col)
-        target_cell.value = 'Yes' if normalized in carrier_on else 'No'
+        if 'FIRST MILE' in label_norm:
+            target_cell.value = 'No'
+            continue
+        carrier = normalize_merchant_carrier(label_val)
+        if not carrier:
+            continue
+        target_cell.value = 'No' if carrier in excluded else 'Yes'
 
 def _unique_cleaned_services(normalized_df):
     if normalized_df is None or 'CLEANED_SHIPPING_SERVICE' not in normalized_df.columns:
@@ -390,7 +394,6 @@ def _unique_cleaned_services(normalized_df):
 def update_pricing_summary_merchant_service_levels(ws, selected_services, normalized_df=None):
     """Update Use in Pricing for Merchant Service Levels section."""
     selected_normalized = {normalize_service_name(s) for s in (selected_services or [])}
-    canonical_map = {normalize_service_name(s): s for s in SERVICE_LEVELS}
 
     stop_titles = {'REDO CARRIERS', 'MERCHANT CARRIERS'}
     header_row_idx, label_col, use_col, rows = _scan_section_rows(
@@ -400,23 +403,9 @@ def update_pricing_summary_merchant_service_levels(ws, selected_services, normal
         return
     existing = {normalize_service_name(label): row for row, label in rows}
 
-    label_cell = ws.cell(header_row_idx + 1, label_col)
-    if isinstance(label_cell.value, str) and label_cell.value.startswith('='):
-        unique_services = _unique_cleaned_services(normalized_df)
-        for idx, service in enumerate(unique_services):
-            row_idx = header_row_idx + 1 + idx
-            target_cell = ws.cell(row_idx, use_col)
-            normalized = normalize_service_name(service)
-            target_cell.value = 'Yes' if normalized in selected_normalized else 'No'
-        return
-
     for normalized, row_idx in existing.items():
         target_cell = ws.cell(row_idx, use_col)
         target_cell.value = 'Yes' if normalized in selected_normalized else 'No'
-
-    missing = [name for name in canonical_map if name not in existing]
-    if missing:
-        app.logger.warning("Merchant Service Levels missing in template: %s", missing)
 
 def detect_structure(csv_path):
     """Detect if invoice is zone-based or zip-based"""
@@ -954,8 +943,11 @@ def generate():
         with open(job_dir / 'mapping.json', 'r') as f:
             mapping_config = json.load(f)
         
-        with open(job_dir / 'service_levels.json', 'r') as f:
-            service_config = json.load(f)
+        merchant_pricing = {'excluded_carriers': [], 'included_services': []}
+        pricing_file = job_dir / 'merchant_pricing.json'
+        if pricing_file.exists():
+            with open(pricing_file, 'r') as f:
+                merchant_pricing = json.load(f)
         
         # Initialize progress
         progress_file = job_dir / 'progress.json'
@@ -964,7 +956,7 @@ def generate():
         
         def run_generation():
             try:
-                generate_rate_card(job_dir, mapping_config, service_config)
+                generate_rate_card(job_dir, mapping_config, merchant_pricing)
             except Exception as e:
                 write_error(job_dir, f'Generation failed: {str(e)}')
 
@@ -996,7 +988,7 @@ def write_error(job_dir, message):
     with open(progress_file, 'w') as f:
         json.dump(progress, f)
 
-def generate_rate_card(job_dir, mapping_config, service_config):
+def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     """Generate the rate card Excel file"""
     # Save output path first
     merchant_name = mapping_config.get('merchant_name', 'Merchant')
@@ -1107,9 +1099,11 @@ def generate_rate_card(job_dir, mapping_config, service_config):
     if missing_headers:
         raise ValueError(f"Template missing required headers: {', '.join(sorted(missing_headers))}")
     
-    # Get selected services (normalized)
-    selected_services = service_config.get('selected_services', [])
-    normalized_selected = [normalize_service_name(s) for s in selected_services]
+    # Get merchant pricing selections
+    excluded_carriers = merchant_pricing.get('excluded_carriers', [])
+    included_services = merchant_pricing.get('included_services', [])
+    normalized_selected = {normalize_service_name(s) for s in included_services}
+    normalized_excluded = {normalize_merchant_carrier(c) for c in excluded_carriers}
     
     # Identify formula columns (AI-AN, 1-indexed)
     formula_cols = set(range(35, 41))
@@ -1241,16 +1235,20 @@ def generate_rate_card(job_dir, mapping_config, service_config):
             if col_idx not in formula_cols:
                 shipping_service = str(row.get('Shipping Service', ''))
                 normalized_service = normalize_service_name(shipping_service)
-                is_qualified = normalized_service in normalized_selected
+                carrier_value = row.get('Shipping Carrier', '')
+                carrier_normalized = normalize_merchant_carrier(carrier_value)
+                carrier_allowed = not carrier_normalized or carrier_normalized not in normalized_excluded
+                is_qualified = carrier_allowed and normalized_service in normalized_selected
                 ws.cell(excel_row, col_idx, is_qualified)
 
     # Update Pricing & Summary redo carrier selections
     if 'Pricing & Summary' in wb.sheetnames:
         selected_redo = redo_config.get('selected_carriers', [])
-        selected_services = service_config.get('selected_services', [])
+        selected_services = merchant_pricing.get('included_services', [])
+        excluded_carriers = merchant_pricing.get('excluded_carriers', [])
         summary_ws = wb['Pricing & Summary']
         update_pricing_summary_redo_carriers(summary_ws, selected_redo)
-        update_pricing_summary_merchant_carriers(summary_ws, selected_redo)
+        update_pricing_summary_merchant_carriers(summary_ws, excluded_carriers)
         update_pricing_summary_merchant_service_levels(
             summary_ws, selected_services, normalized_df
         )
