@@ -97,8 +97,8 @@ REDO_CARRIERS = [
     "USPS Market",
     "UPS Ground",
     "UPS Ground Saver",
-    "FedEx",
     "Amazon",
+    "FedEx",
     "DHL"
 ]
 
@@ -107,7 +107,45 @@ REDO_FORCED_ON = [
     "UPS Ground",
     "UPS Ground Saver"
 ]
-MERCHANT_CARRIERS = ['USPS', 'UPS', 'FedEx', 'Amazon', 'DHL']
+MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'DHL']
+
+BASE_DIR = Path(__file__).resolve().parent
+AMAZON_ZIP_PATH = BASE_DIR / 'Amazon Zip list  - Zip Code List.csv'
+AMAZON_ZIPS = None
+
+def _load_amazon_zips():
+    global AMAZON_ZIPS
+    if AMAZON_ZIPS is not None:
+        return AMAZON_ZIPS
+    zips = set()
+    if AMAZON_ZIP_PATH.exists():
+        try:
+            with AMAZON_ZIP_PATH.open(newline='', encoding='utf-8', errors='ignore') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    raw = row.get('Zip Code') or ''
+                    digits = re.sub(r'\D', '', str(raw))
+                    if not digits:
+                        continue
+                    if len(digits) < 5:
+                        digits = digits.zfill(5)
+                    else:
+                        digits = digits[:5]
+                    zips.add(digits)
+        except Exception:
+            zips = set()
+    AMAZON_ZIPS = zips
+    return AMAZON_ZIPS
+
+def is_amazon_eligible(origin_zip):
+    digits = re.sub(r'\D', '', str(origin_zip or ''))
+    if not digits:
+        return False
+    amazon_zips = _load_amazon_zips()
+    if len(digits) < 5:
+        return any(zip_code.startswith(digits) for zip_code in amazon_zips)
+    digits = digits[:5]
+    return digits in amazon_zips
 
 def default_included_services(services):
     if not services:
@@ -875,6 +913,17 @@ def get_service_levels(job_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/amazon-eligibility', methods=['POST'])
+def amazon_eligibility():
+    """Return Amazon eligibility based on origin ZIP."""
+    try:
+        data = request.json or {}
+        origin_zip = data.get('origin_zip', '')
+        eligible = is_amazon_eligible(origin_zip)
+        return jsonify({'eligible': eligible})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/merchant-pricing/<job_id>', methods=['GET', 'POST'])
 def merchant_pricing(job_id):
     """Get or save merchant pricing selections."""
@@ -940,6 +989,14 @@ def redo_carriers(job_id):
         data = request.json or {}
         selected = data.get('selected_carriers', [])
         selected = [c for c in selected if c in REDO_CARRIERS]
+        mapping_file = job_dir / 'mapping.json'
+        if mapping_file.exists():
+            with open(mapping_file, 'r') as f:
+                mapping_config = json.load(f)
+            if is_amazon_eligible(mapping_config.get('origin_zip')):
+                if 'Amazon' not in selected:
+                    selected.append('Amazon')
+
         with open(job_dir / 'redo_carriers.json', 'w') as f:
             json.dump({'selected_carriers': selected}, f)
         return jsonify({'success': True})
@@ -953,6 +1010,13 @@ def redo_carriers(job_id):
 
     available = list(REDO_CARRIERS)
     selected = list(REDO_FORCED_ON)
+    mapping_file = job_dir / 'mapping.json'
+    if mapping_file.exists():
+        with open(mapping_file, 'r') as f:
+            mapping_config = json.load(f)
+        if is_amazon_eligible(mapping_config.get('origin_zip')):
+            if 'Amazon' not in selected:
+                selected.append('Amazon')
     redo_file = job_dir / 'redo_carriers.json'
     if redo_file.exists():
         with open(redo_file, 'r') as f:
@@ -1182,6 +1246,14 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
             if cell_value and str(cell_value).startswith('='):
                 formula_cols.add(col_idx)
     
+    column_data = {
+        field: normalized_df[field].tolist()
+        for field in field_to_excel.keys()
+        if field in normalized_df.columns
+    }
+    shipping_service_data = normalized_df['Shipping Service'].tolist() if 'Shipping Service' in normalized_df.columns else None
+    shipping_carrier_data = normalized_df['Shipping Carrier'].tolist() if 'Shipping Carrier' in normalized_df.columns else None
+
     write_cols = set()
     write_fields = []
     for std_field, excel_col in field_to_excel.items():
@@ -1210,14 +1282,6 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
                 if cell.value and str(cell.value).startswith('='):
                     continue
                 cell.value = None
-
-    column_data = {
-        field: normalized_df[field].tolist()
-        for field in field_to_excel.keys()
-        if field in normalized_df.columns
-    }
-    shipping_service_data = normalized_df['Shipping Service'].tolist() if 'Shipping Service' in normalized_df.columns else None
-    shipping_carrier_data = normalized_df['Shipping Carrier'].tolist() if 'Shipping Carrier' in normalized_df.columns else None
 
     numeric_cols = {
         'WEIGHT_IN_OZ',

@@ -119,7 +119,16 @@
         noServices.style.display = 'block';
       } else {
         noServices.style.display = 'none';
+        const selected = [];
+        const unselected = [];
         data.service_levels.forEach((name) => {
+          if (included.has(name)) {
+            selected.push(name);
+          } else {
+            unselected.push(name);
+          }
+        });
+        [...selected, ...unselected].forEach((name) => {
           const checked = included.has(name);
           serviceList.appendChild(renderCheckbox(name, checked));
         });

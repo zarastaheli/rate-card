@@ -99,8 +99,14 @@
           <label class="field-label-inline" for="existing-customer">Existing customer</label>
         </div>
         <div class="form-field" id="origin-zip-field" style="display: none; margin-top: 16px;">
-          <label class="field-label" for="origin-zip">Origin ZIP <span class="required-asterisk" id="origin-zip-asterisk">*</span></label>
+          <label class="field-label" for="origin-zip">Origin ZIP <span class="required-asterisk">*</span></label>
           <input type="text" class="text-input" id="origin-zip" placeholder="Enter origin ZIP code" />
+        </div>
+        <div class="form-field" id="amazon-eligibility-field" style="display: none; margin-top: 12px;">
+          <div class="form-row form-row-inline">
+            <span class="eligibility-indicator" id="amazon-eligible-indicator">✕</span>
+            <span class="field-label" id="amazon-eligible-text">Amazon Eligible</span>
+          </div>
         </div>
         <div class="form-field" id="annual-orders-field" style="display: none; margin-top: 16px;">
           <label class="field-label" for="annual-orders">Annual orders</label>
@@ -134,7 +140,9 @@
     const structurePill = document.getElementById('structure-pill');
     const originZipField = document.getElementById('origin-zip-field');
     const originZipInput = document.getElementById('origin-zip');
-    const originZipAsterisk = document.getElementById('origin-zip-asterisk');
+    const amazonEligibilityField = document.getElementById('amazon-eligibility-field');
+    const amazonEligibleIndicator = document.getElementById('amazon-eligible-indicator');
+    const amazonEligibleText = document.getElementById('amazon-eligible-text');
     const annualOrdersField = document.getElementById('annual-orders-field');
     const annualOrdersInput = document.getElementById('annual-orders');
     const continueBtn = document.getElementById('continue-btn');
@@ -213,16 +221,15 @@
 
         // Show detected structure
         detectedStructureRow.style.display = 'flex';
+        amazonEligibilityField.style.display = 'none';
         if (detectedStructure === 'zone') {
           structurePill.textContent = 'Zone-based';
           structurePill.className = 'csv-structure-pill csv-structure-pill--zone';
           originZipField.style.display = 'block';
-          originZipAsterisk.style.display = 'none';
         } else if (detectedStructure === 'zip') {
           structurePill.textContent = 'Zip-based';
           structurePill.className = 'csv-structure-pill csv-structure-pill--zip';
           originZipField.style.display = 'block';
-          originZipAsterisk.style.display = 'inline';
         } else {
           structurePill.textContent = 'Unknown';
           structurePill.className = 'csv-structure-pill csv-structure-pill--unknown';
@@ -245,6 +252,7 @@
       merchantInfoSection.style.display = 'none';
       detectedStructureRow.style.display = 'none';
       originZipField.style.display = 'none';
+      amazonEligibilityField.style.display = 'none';
       annualOrdersField.style.display = 'none';
       jobId = null;
       updateContinueButton();
@@ -258,9 +266,7 @@
     function updateContinueButton() {
       let canContinue = jobId !== null && merchantNameInput.value.trim() !== '';
       
-      if (detectedStructure === 'zip') {
-        canContinue = canContinue && originZipInput.value.trim() !== '';
-      }
+      canContinue = canContinue && originZipInput.value.trim() !== '';
       
       if (existingCustomerCheckbox.checked) {
         canContinue = canContinue && merchantIdInput.value.trim() !== '';
@@ -273,6 +279,42 @@
     merchantIdInput.addEventListener('input', updateContinueButton);
     originZipInput.addEventListener('input', updateContinueButton);
     annualOrdersInput.addEventListener('input', updateContinueButton);
+
+    let eligibilityTimer = null;
+    originZipInput.addEventListener('input', () => {
+      if (eligibilityTimer) clearTimeout(eligibilityTimer);
+      eligibilityTimer = setTimeout(async () => {
+        const zip = originZipInput.value.trim();
+        if (zip.length < 3) {
+          amazonEligibilityField.style.display = 'none';
+          amazonEligibleIndicator.textContent = '✕';
+          amazonEligibleIndicator.classList.remove('is-eligible', 'is-ineligible');
+          return;
+        }
+        try {
+          amazonEligibilityField.style.display = 'block';
+          const response = await fetch('/api/amazon-eligibility', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ origin_zip: zip })
+          });
+          const data = await response.json();
+          if (data.error) {
+            amazonEligibleIndicator.textContent = '✕';
+            amazonEligibleIndicator.classList.remove('is-eligible');
+            amazonEligibleIndicator.classList.add('is-ineligible');
+            return;
+          }
+          amazonEligibleIndicator.textContent = data.eligible ? '✓' : '✕';
+          amazonEligibleIndicator.classList.toggle('is-eligible', !!data.eligible);
+          amazonEligibleIndicator.classList.toggle('is-ineligible', !data.eligible);
+        } catch (e) {
+          amazonEligibleIndicator.textContent = '✕';
+          amazonEligibleIndicator.classList.remove('is-eligible');
+          amazonEligibleIndicator.classList.add('is-ineligible');
+        }
+      }, 300);
+    });
 
     continueBtn.addEventListener('click', () => {
       if (continueBtn.disabled) return;

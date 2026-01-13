@@ -272,6 +272,28 @@ h1,
   content: '✓';
 }
 
+.eligibility-indicator {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #fee2e2;
+  color: #b42318;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.eligibility-indicator.is-eligible {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.eligibility-indicator.is-ineligible {
+  background: #fee2e2;
+  color: #b42318;
+}
+
 .uploaded-meta {
   display: inline-flex;
   align-items: center;
