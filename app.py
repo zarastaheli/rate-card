@@ -3,10 +3,12 @@ import csv
 import json
 import uuid
 import shutil
+import subprocess
 import re
 import zipfile
 import tempfile
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file, session
@@ -20,6 +22,11 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.config['UPLOAD_FOLDER'] = 'runs'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
+
+dashboard_jobs = {}
+dashboard_jobs_lock = threading.Lock()
+summary_jobs = {}
+summary_jobs_lock = threading.Lock()
 
 # Thresholds for size/weight classification.
 SMALL_MAX_VOLUME = 1728
@@ -108,6 +115,7 @@ REDO_FORCED_ON = [
     "UPS Ground Saver"
 ]
 MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'DHL']
+DASHBOARD_CARRIERS = ['USPS Market', 'UPS', 'Amazon', 'FedEx', 'DHL']
 
 def strip_after_dash(value):
     if value is None:
@@ -345,6 +353,272 @@ def normalize_merchant_carrier(value):
     if 'DHL' in text:
         return 'DHL'
     return ""
+
+def _dashboard_selected_from_redo(selected_redo):
+    selected = set()
+    if not selected_redo:
+        return selected
+    if 'USPS Market' in selected_redo:
+        selected.add('USPS Market')
+    if 'UPS Ground' in selected_redo or 'UPS Ground Saver' in selected_redo:
+        selected.add('UPS')
+    if 'Amazon' in selected_redo:
+        selected.add('Amazon')
+    if 'FedEx' in selected_redo:
+        selected.add('FedEx')
+    if 'DHL' in selected_redo:
+        selected.add('DHL')
+    return selected
+
+def _redo_selection_from_dashboard(selected_dashboard):
+    selected = set()
+    if not selected_dashboard:
+        return selected
+    if 'USPS Market' in selected_dashboard:
+        selected.add('USPS MARKET')
+    if 'UPS' in selected_dashboard:
+        selected.add('UPS GROUND')
+        selected.add('UPS GROUND SAVER')
+    if 'Amazon' in selected_dashboard:
+        selected.add('AMAZON')
+    if 'FedEx' in selected_dashboard:
+        selected.add('FEDEX')
+    if 'DHL' in selected_dashboard:
+        selected.add('DHL')
+    return selected
+
+def _read_summary_metrics(ws):
+    labels = [
+        'Est. Merchant Annual Savings',
+        'Est. Redo Deal Size',
+        'Spread Available',
+        '% Orders We Could Win',
+        '% Orders Won W/ Spread'
+    ]
+    values = {}
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value in labels:
+                value_cell = ws.cell(cell.row, cell.column + 1)
+                values[cell.value] = value_cell.value
+    return values
+
+def _apply_redo_selection(ws, selected_dashboard):
+    header_row_idx, label_col, use_col = _find_pricing_section(ws, 'Redo Carriers')
+    if header_row_idx is None:
+        return
+    selection = _redo_selection_from_dashboard(selected_dashboard)
+    stop_titles = {'MERCHANT CARRIERS', 'MERCHANT CARRIER', 'MERCHANT SERVICE LEVELS'}
+    for row_idx, label_val in _iter_section_rows(ws, header_row_idx + 1, label_col, stop_titles):
+        normalized = normalize_redo_label(label_val)
+        target_cell = ws.cell(row_idx, use_col)
+        if 'FIRST MILE' in normalized:
+            target_cell.value = 'No'
+            continue
+        target_cell.value = 'Yes' if normalized in selection else 'No'
+
+def _recalc_workbook(input_path, output_dir, profile_dir=None):
+    soffice = shutil.which('soffice')
+    if not soffice:
+        candidate = Path('/Applications/LibreOffice.app/Contents/MacOS/soffice')
+        if candidate.exists():
+            soffice = str(candidate)
+    if not soffice:
+        raise RuntimeError('LibreOffice (soffice) not found')
+    cmd = [
+        soffice,
+        '--headless',
+        '--invisible',
+        '--nologo',
+        '--nofirststartwizard',
+        '--norestore',
+        '--nocrashreport'
+    ]
+    if profile_dir:
+        cmd.append(f"--env:UserInstallation={Path(profile_dir).resolve().as_uri()}")
+    cmd.extend(['--convert-to', 'xlsx', '--outdir', str(output_dir), str(input_path)])
+    subprocess.run(
+        cmd,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    candidates = list(Path(output_dir).glob('*.xlsx'))
+    if not candidates:
+        raise RuntimeError('LibreOffice did not produce an output file')
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+def _calculate_metrics(job_dir, selected_dashboard, profile_dir=None):
+    rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+    if not rate_card_files:
+        raise FileNotFoundError('Rate card not found')
+    source_path = rate_card_files[0]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        temp_input = tmp_dir_path / source_path.name
+        shutil.copy2(source_path, temp_input)
+
+        wb = openpyxl.load_workbook(temp_input, data_only=False)
+        if 'Pricing & Summary' not in wb.sheetnames:
+            wb.close()
+            raise ValueError('Pricing & Summary sheet not found')
+        ws = wb['Pricing & Summary']
+        _apply_redo_selection(ws, selected_dashboard)
+        wb.save(temp_input)
+        wb.close()
+
+        recalculated_path = _recalc_workbook(temp_input, tmp_dir_path, profile_dir=profile_dir)
+        result_wb = openpyxl.load_workbook(recalculated_path, data_only=True, read_only=True)
+        result_ws = result_wb['Pricing & Summary']
+        metrics = _read_summary_metrics(result_ws)
+        result_wb.close()
+    return metrics
+
+def _get_lo_profile(job_dir):
+    profile_dir = (Path(tempfile.gettempdir()) / f"lo-profile-{Path(job_dir).name}").resolve()
+    lock_path = profile_dir / 'lock'
+    if lock_path.exists():
+        try:
+            age = time.time() - lock_path.stat().st_mtime
+        except Exception:
+            age = None
+        if age is None or age > 120:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    return profile_dir
+
+def _cache_path_for_job(job_dir):
+    return job_dir / 'dashboard_breakdown.json'
+
+def _summary_cache_path(job_dir):
+    return job_dir / 'dashboard_summary.json'
+
+def _selection_cache_key(selected_dashboard):
+    return '|'.join(sorted(selected_dashboard))
+
+def _read_summary_cache(job_dir, source_mtime, selection_key):
+    cache_path = _summary_cache_path(job_dir)
+    if not cache_path.exists():
+        return None
+    try:
+        with open(cache_path, 'r') as f:
+            cache = json.load(f)
+        if cache.get('source_mtime') != source_mtime:
+            return None
+        entries = cache.get('entries', {})
+        return entries.get(selection_key)
+    except Exception:
+        return None
+
+def _write_summary_cache(job_dir, source_mtime, selection_key, metrics):
+    cache_path = _summary_cache_path(job_dir)
+    payload = {'source_mtime': source_mtime, 'updated_at': datetime.utcnow().isoformat(), 'entries': {}}
+    if cache_path.exists():
+        try:
+            with open(cache_path, 'r') as f:
+                existing = json.load(f)
+            if existing.get('source_mtime') == source_mtime:
+                payload = existing
+        except Exception:
+            payload = {'source_mtime': source_mtime, 'updated_at': datetime.utcnow().isoformat(), 'entries': {}}
+    payload['source_mtime'] = source_mtime
+    payload['updated_at'] = datetime.utcnow().isoformat()
+    payload.setdefault('entries', {})
+    payload['entries'][selection_key] = metrics
+    with open(cache_path, 'w') as f:
+        json.dump(payload, f)
+
+def _read_breakdown_cache(job_dir, source_mtime):
+    cache_path = _cache_path_for_job(job_dir)
+    if not cache_path.exists():
+        return None, False
+    try:
+        with open(cache_path, 'r') as f:
+            cache = json.load(f)
+        if cache.get('source_mtime') != source_mtime:
+            return None, False
+        return cache.get('per_carrier', []), bool(cache.get('complete', False))
+    except Exception:
+        return None, False
+
+def _write_breakdown_cache(job_dir, source_mtime, per_carrier, complete=True):
+    cache_path = _cache_path_for_job(job_dir)
+    payload = {
+        'source_mtime': source_mtime,
+        'updated_at': datetime.utcnow().isoformat(),
+        'complete': complete,
+        'per_carrier': per_carrier
+    }
+    with open(cache_path, 'w') as f:
+        json.dump(payload, f)
+
+def _build_breakdown_cache(job_dir, source_mtime, job_key):
+    try:
+        per_carrier = []
+        profile_dir = _get_lo_profile(job_dir)
+        for carrier in DASHBOARD_CARRIERS:
+            try:
+                try:
+                    metrics = _calculate_metrics(job_dir, [carrier], profile_dir)
+                except subprocess.CalledProcessError:
+                    metrics = _calculate_metrics(job_dir, [carrier], profile_dir=None)
+                per_carrier.append({
+                    'carrier': carrier,
+                    'metrics': metrics
+                })
+                _write_breakdown_cache(job_dir, source_mtime, per_carrier, complete=False)
+            finally:
+                pass
+        _write_breakdown_cache(job_dir, source_mtime, per_carrier, complete=True)
+    finally:
+        with dashboard_jobs_lock:
+            dashboard_jobs.pop(job_key, None)
+
+def _build_summary_cache(job_dir, source_mtime, selection_key, selected_dashboard, job_key):
+    try:
+        profile_dir = _get_lo_profile(job_dir)
+        try:
+            metrics = _calculate_metrics(job_dir, selected_dashboard, profile_dir)
+        except subprocess.CalledProcessError:
+            metrics = _calculate_metrics(job_dir, selected_dashboard, profile_dir=None)
+        _write_summary_cache(job_dir, source_mtime, selection_key, metrics)
+        _start_breakdown_cache(job_dir, source_mtime)
+    finally:
+        with summary_jobs_lock:
+            summary_jobs.pop(job_key, None)
+
+def _start_breakdown_cache(job_dir, source_mtime):
+    cached, complete = _read_breakdown_cache(job_dir, source_mtime)
+    if cached is not None:
+        return cached, not complete
+    job_key = f"{job_dir.name}:{source_mtime}"
+    with dashboard_jobs_lock:
+        if job_key not in dashboard_jobs:
+            thread = threading.Thread(
+                target=_build_breakdown_cache,
+                args=(job_dir, source_mtime, job_key),
+                daemon=True
+            )
+            dashboard_jobs[job_key] = thread
+            thread.start()
+    return None, True
+
+def _start_summary_cache(job_dir, source_mtime, selected_dashboard):
+    selection_key = _selection_cache_key(selected_dashboard)
+    cached = _read_summary_cache(job_dir, source_mtime, selection_key)
+    if cached is not None:
+        return cached, False
+    job_key = f"{job_dir.name}:{source_mtime}:{selection_key}"
+    with summary_jobs_lock:
+        if job_key not in summary_jobs:
+            thread = threading.Thread(
+                target=_build_summary_cache,
+                args=(job_dir, source_mtime, selection_key, selected_dashboard, job_key),
+                daemon=True
+            )
+            summary_jobs[job_key] = thread
+            thread.start()
+    return None, True
 
 def _find_pricing_section(ws, section_title):
     title_cell = None
@@ -679,6 +953,23 @@ def ready_page():
             merchant_name = config.get('merchant_name', 'Merchant')
     
     return render_template('screen3.html', job_id=job_id, merchant_name=merchant_name)
+
+@app.route('/dashboard')
+def dashboard_page():
+    """Render summary dashboard page"""
+    job_id = request.args.get('job_id')
+    if not job_id:
+        return render_template('screen1.html'), 400
+    job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+    if not job_dir.exists():
+        return render_template('screen1.html'), 404
+    merchant_name = 'Merchant'
+    mapping_file = job_dir / 'mapping.json'
+    if mapping_file.exists():
+        with open(mapping_file, 'r') as f:
+            config = json.load(f)
+            merchant_name = config.get('merchant_name', 'Merchant')
+    return render_template('dashboard.html', job_id=job_id, merchant_name=merchant_name)
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
@@ -1085,6 +1376,23 @@ def generate():
         def run_generation():
             try:
                 generate_rate_card(job_dir, mapping_config, merchant_pricing)
+                rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+                if rate_card_files:
+                    source_mtime = int(rate_card_files[0].stat().st_mtime)
+                    redo_selected = []
+                    redo_file = job_dir / 'redo_carriers.json'
+                    if redo_file.exists():
+                        with open(redo_file, 'r') as f:
+                            redo_config = json.load(f)
+                            redo_selected = redo_config.get('selected_carriers', [])
+                    else:
+                        redo_selected = list(REDO_FORCED_ON)
+                        if is_amazon_eligible(mapping_config.get('origin_zip')):
+                            redo_selected.append('Amazon')
+                    selected_set = _dashboard_selected_from_redo(redo_selected)
+                    selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in selected_set]
+                    if selected_dashboard:
+                        _start_summary_cache(job_dir, source_mtime, selected_dashboard)
             except Exception as e:
                 write_error(job_dir, f'Generation failed: {str(e)}')
 
@@ -1479,10 +1787,9 @@ def status(job_id=None):
             with open(mapping_file, 'r') as f:
                 config = json.load(f)
                 merchant_name = config.get('merchant_name', 'Merchant')
-        
         return jsonify({
             'ready': True,
-            'redirect_url': f'/ready?job_id={job_id}',
+            'redirect_url': f'/dashboard?job_id={job_id}',
             'progress': progress
         })
     
@@ -1500,6 +1807,86 @@ def status(job_id=None):
         'progress': progress,
         'eta_seconds_remaining': eta_remaining
     })
+
+@app.route('/api/dashboard/<job_id>', methods=['GET', 'POST'])
+def dashboard_data(job_id):
+    """Return dashboard metrics for overall and per-carrier selections."""
+    try:
+        job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+        if not job_dir.exists():
+            return jsonify({'error': 'Job not found'}), 404
+        rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+        if not rate_card_files:
+            return jsonify({'error': 'Rate card not found'}), 404
+        source_mtime = int(rate_card_files[0].stat().st_mtime)
+
+        redo_selected = []
+        redo_file = job_dir / 'redo_carriers.json'
+        if redo_file.exists():
+            with open(redo_file, 'r') as f:
+                redo_config = json.load(f)
+                redo_selected = redo_config.get('selected_carriers', [])
+        else:
+            redo_selected = list(REDO_FORCED_ON)
+            mapping_file = job_dir / 'mapping.json'
+            if mapping_file.exists():
+                with open(mapping_file, 'r') as f:
+                    mapping_config = json.load(f)
+                if is_amazon_eligible(mapping_config.get('origin_zip')):
+                    redo_selected.append('Amazon')
+
+        selected_set = _dashboard_selected_from_redo(redo_selected)
+        selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in selected_set]
+        if request.method == 'POST':
+            data = request.json or {}
+            incoming = data.get('selected_carriers', [])
+            if isinstance(incoming, list) and incoming:
+                selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in incoming]
+
+        overall_metrics, summary_pending = _start_summary_cache(job_dir, source_mtime, selected_dashboard)
+        if overall_metrics is None and not summary_pending:
+            overall_metrics = {}
+
+        per_carrier = []
+        include_per_carrier = request.args.get('per_carrier') == '1'
+        if request.method == 'GET' and include_per_carrier:
+            if summary_pending:
+                return jsonify({
+                    'selected_carriers': selected_dashboard,
+                    'available_carriers': DASHBOARD_CARRIERS,
+                    'overall': overall_metrics,
+                    'per_carrier': [],
+                    'pending': True,
+                    'summary_pending': True,
+                    'per_carrier_count': 0,
+                    'per_carrier_total': len(DASHBOARD_CARRIERS)
+                })
+            cached, pending = _start_breakdown_cache(job_dir, source_mtime)
+            per_carrier = cached or []
+            per_carrier_count = len(per_carrier)
+            return jsonify({
+                'selected_carriers': selected_dashboard,
+                'available_carriers': DASHBOARD_CARRIERS,
+                'overall': overall_metrics,
+                'per_carrier': per_carrier,
+                'pending': pending,
+                'summary_pending': summary_pending,
+                'per_carrier_count': per_carrier_count,
+                'per_carrier_total': len(DASHBOARD_CARRIERS)
+            })
+
+        return jsonify({
+            'selected_carriers': selected_dashboard,
+            'available_carriers': DASHBOARD_CARRIERS,
+            'overall': overall_metrics,
+            'per_carrier': per_carrier,
+            'pending': False,
+            'summary_pending': summary_pending
+        })
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<job_id>/rate-card')
 def download_rate_card(job_id):

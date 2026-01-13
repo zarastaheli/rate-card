@@ -95,6 +95,8 @@
       }
     }
 
+    let lastEtaSeconds = null;
+
     async function pollStatus() {
       const token = "{{ token }}";
       try {
@@ -109,15 +111,22 @@
         if (etaEl) {
           let seconds = null;
           if (data.eta_seconds_remaining !== null && data.eta_seconds_remaining !== undefined) {
-            seconds = Math.max(1, data.eta_seconds_remaining);
+            seconds = Math.max(0, data.eta_seconds_remaining);
           } else if (data.progress && data.progress.eta_seconds) {
-            seconds = Math.max(1, data.progress.eta_seconds);
+            seconds = Math.max(0, data.progress.eta_seconds);
+          }
+          if (seconds === null) {
+            seconds = lastEtaSeconds;
+          }
+          if (lastEtaSeconds !== null && seconds !== null) {
+            seconds = Math.min(seconds, lastEtaSeconds);
           }
           if (seconds === null) {
             seconds = 60;
           }
+          lastEtaSeconds = seconds;
           if (seconds < 60) {
-            etaEl.textContent = `${seconds}s`;
+            etaEl.textContent = `${Math.max(1, Math.round(seconds))}s`;
           } else {
             const minutes = Math.max(1, Math.round(seconds / 60));
             etaEl.textContent = `${minutes}m`;

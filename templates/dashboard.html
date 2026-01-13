@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rate card summary</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="page-container">
+    <div class="card card--tall">
+      <div class="card-content">
+        <div class="card-body balanced-body">
+      <div class="breadcrumb">
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">1</span>
+          <span class="breadcrumb-label">Raw invoice</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">2</span>
+          <span class="breadcrumb-label">Normalize &amp; mapping</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">3</span>
+          <span class="breadcrumb-label">Merchant pricing</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item completed">
+          <span class="breadcrumb-number">4</span>
+          <span class="breadcrumb-label">Redo carriers</span>
+        </div>
+        <div class="breadcrumb-separator"></div>
+        <div class="breadcrumb-item active">
+          <span class="breadcrumb-number">5</span>
+          <span class="breadcrumb-label">Rate card</span>
+        </div>
+      </div>
+
+      <div class="dashboard-header">
+        <div>
+          <h1>Rate Card Summary</h1>
+          <p class="subtitle">Overview and carrier breakdown based on your selections</p>
+        </div>
+        <div class="dashboard-actions">
+          <button class="button button-primary button-no-shadow" type="button" id="download-btn">Download rate card</button>
+          <button class="button button-secondary" type="button" id="sharepoint-btn">View file in SharePoint</button>
+        </div>
+      </div>
+
+      <div id="dashboard-loading" class="dashboard-loading">
+        <div class="dashboard-loading-spinner"></div>
+        <div class="dashboard-loading-text">Loading summary...</div>
+      </div>
+
+      <div id="dashboard-content" class="dashboard-content is-hidden">
+      <div class="section-block selected-carriers-section">
+        <div class="section-title">Selected carriers</div>
+        <div class="carrier-chips" id="selected-carriers"></div>
+      </div>
+
+      <div class="summary-grid" id="summary-grid">
+        <div class="metric-card">
+          <div class="metric-label">Est. Merchant Annual Savings</div>
+          <div class="metric-value" id="metric-merchant-savings">--</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Est. Redo Deal Size</div>
+          <div class="metric-value" id="metric-redo-deal-size">--</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Spread Available</div>
+          <div class="metric-value" id="metric-spread-available">--</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">% Orders We Could Win</div>
+          <div class="metric-value" id="metric-orders-could-win">--</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">% Orders Won w/ Spread</div>
+          <div class="metric-value" id="metric-orders-won-spread">--</div>
+        </div>
+      </div>
+
+      <div class="section-block is-hidden" id="breakdown-section">
+        <div class="section-title">Carrier breakdown</div>
+        <div class="breakdown-table">
+          <div class="breakdown-row breakdown-header">
+            <div>Carrier</div>
+            <div>Est. Merchant Annual Savings</div>
+            <div>Est. Redo Deal Size</div>
+            <div>Spread Available</div>
+            <div>% Orders We Could Win</div>
+            <div>% Orders Won w/ Spread</div>
+          </div>
+          <div class="breakdown-loading" id="breakdown-loading">Loading carrier breakdown...</div>
+          <div id="carrier-breakdown"></div>
+        </div>
+      </div>
+
+      <div class="dashboard-footnote">All figures are estimates</div>
+      </div>
+
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const jobId = '{{ job_id }}';
+    const merchantName = '{{ merchant_name }}';
+    const downloadBtn = document.getElementById('download-btn');
+    const sharepointBtn = document.getElementById('sharepoint-btn');
+
+    downloadBtn.addEventListener('click', () => {
+      window.location.href = `/download/${jobId}/rate-card`;
+    });
+    sharepointBtn.addEventListener('click', () => {
+      window.open(`https://sharepoint.example.com?merchant=${encodeURIComponent(merchantName)}`, '_blank');
+    });
+
+    const metricMap = {
+      'Est. Merchant Annual Savings': 'metric-merchant-savings',
+      'Est. Redo Deal Size': 'metric-redo-deal-size',
+      'Spread Available': 'metric-spread-available',
+      '% Orders We Could Win': 'metric-orders-could-win',
+      '% Orders Won W/ Spread': 'metric-orders-won-spread'
+    };
+
+    function formatMetric(label, value) {
+      if (value === null || value === undefined || value === '') return '--';
+      if (typeof value === 'string') return value;
+      if (label.includes('%')) {
+        return `${Math.round(value * 100)}%`;
+      }
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 0
+      }).format(value);
+    }
+
+    function parseMetricValue(value) {
+      if (value === null || value === undefined || value === '') return null;
+      if (typeof value === 'number') return value;
+      const cleaned = String(value).replace(/[$,%]/g, '').replace(/,/g, '').trim();
+      const parsed = Number(cleaned);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function renderSummary(metrics) {
+      Object.entries(metricMap).forEach(([label, id]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = formatMetric(label, metrics[label]);
+      });
+    }
+
+    function renderSelectedCarriers(available, selected) {
+      const container = document.getElementById('selected-carriers');
+      container.innerHTML = '';
+      available.forEach((carrier) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'carrier-chip';
+        if (selected.includes(carrier)) {
+          chip.classList.add('is-selected');
+        }
+        chip.textContent = carrier;
+        chip.dataset.carrier = carrier;
+        container.appendChild(chip);
+      });
+    }
+
+    function renderBreakdown(perCarrier) {
+      const container = document.getElementById('carrier-breakdown');
+      container.innerHTML = '';
+      const columns = [
+        'Est. Merchant Annual Savings',
+        'Est. Redo Deal Size',
+        'Spread Available',
+        '% Orders We Could Win',
+        '% Orders Won W/ Spread'
+      ];
+      const maxValues = {};
+      columns.forEach((label) => {
+        const values = perCarrier
+          .map(row => parseMetricValue((row.metrics || {})[label]))
+          .filter(val => val !== null);
+        maxValues[label] = values.length ? Math.max(...values) : null;
+      });
+      perCarrier.forEach((row) => {
+        const metrics = row.metrics || {};
+        const rowEl = document.createElement('div');
+        rowEl.className = 'breakdown-row';
+        const formatWithHighlight = (label) => {
+          const raw = metrics[label];
+          const formatted = formatMetric(label, raw);
+          const numeric = parseMetricValue(raw);
+          const max = maxValues[label];
+          if (numeric !== null && max !== null && numeric === max) {
+            return `<span class="metric-pill">${formatted}</span>`;
+          }
+          return formatted;
+        };
+        rowEl.innerHTML = `
+          <div>${row.carrier}</div>
+          <div>${formatWithHighlight('Est. Merchant Annual Savings')}</div>
+          <div>${formatWithHighlight('Est. Redo Deal Size')}</div>
+          <div>${formatWithHighlight('Spread Available')}</div>
+          <div>${formatWithHighlight('% Orders We Could Win')}</div>
+          <div>${formatWithHighlight('% Orders Won W/ Spread')}</div>
+        `;
+        container.appendChild(rowEl);
+      });
+    }
+
+    let currentSelection = [];
+    let selectionTimer = null;
+
+    function setLoading(isLoading, message, hideContent) {
+      const loadingEl = document.getElementById('dashboard-loading');
+      const contentEl = document.getElementById('dashboard-content');
+      if (message) {
+        const textEl = loadingEl.querySelector('.dashboard-loading-text');
+        if (textEl) textEl.textContent = message;
+      }
+      loadingEl.style.display = isLoading ? 'flex' : 'none';
+      contentEl.classList.toggle('is-dimmed', isLoading && !hideContent);
+      if (hideContent) {
+        contentEl.classList.toggle('is-hidden', isLoading);
+      } else {
+        contentEl.classList.remove('is-hidden');
+      }
+    }
+
+    async function loadDashboard(selected = null, initial = false, recalculating = false) {
+      if (initial) {
+        setLoading(true, 'Loading summary...', true);
+      } else if (recalculating) {
+        setLoading(true, 'Recalculating...', false);
+      }
+      const options = selected
+        ? {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ selected_carriers: selected })
+          }
+        : {};
+      const response = await fetch(`/api/dashboard/${jobId}`, options);
+      const data = await response.json();
+      if (data.error) {
+        alert(data.error);
+        setLoading(false, '', false);
+        return;
+      }
+      if (data.summary_pending) {
+        if (initial) {
+          setLoading(true, 'Loading summary...', true);
+        } else if (recalculating) {
+          setLoading(true, 'Recalculating...', false);
+        }
+        setTimeout(() => loadDashboard(selected, initial, recalculating), 700);
+        return;
+      }
+      currentSelection = data.selected_carriers || [];
+      renderSummary(data.overall || {});
+      renderSelectedCarriers(data.available_carriers || [], currentSelection);
+      const breakdownSection = document.getElementById('breakdown-section');
+      if (breakdownSection) {
+        breakdownSection.classList.remove('is-hidden');
+      }
+      setLoading(false, '', false);
+    }
+
+    async function loadPerCarrier() {
+      const loadingEl = document.getElementById('breakdown-loading');
+      const breakdownSection = document.getElementById('breakdown-section');
+      if (breakdownSection) breakdownSection.classList.remove('is-hidden');
+      loadingEl.style.display = 'block';
+      const response = await fetch(`/api/dashboard/${jobId}?per_carrier=1`);
+      const data = await response.json();
+      if (data.error) {
+        loadingEl.textContent = 'Unable to load carrier breakdown.';
+        return;
+      }
+      if (data.per_carrier_total) {
+        loadingEl.textContent = `Calculating carrier breakdown ${data.per_carrier_count || 0}/${data.per_carrier_total}...`;
+      }
+      if (data.per_carrier && data.per_carrier.length) {
+        renderBreakdown(data.per_carrier);
+      }
+      if (data.pending) {
+        setTimeout(loadPerCarrier, 900);
+        return;
+      }
+      loadingEl.style.display = 'none';
+    }
+
+    document.addEventListener('click', (event) => {
+      const chip = event.target.closest('.carrier-chip');
+      if (!chip || !chip.dataset.carrier) return;
+      if (selectionTimer) clearTimeout(selectionTimer);
+      selectionTimer = setTimeout(() => {
+        const carriers = Array.from(document.querySelectorAll('.carrier-chip'))
+          .map(el => el.dataset.carrier);
+        const selected = Array.from(document.querySelectorAll('.carrier-chip.is-selected'))
+          .map(el => el.dataset.carrier);
+        const target = chip.dataset.carrier;
+        const nextSelected = selected.includes(target)
+          ? selected.filter(c => c !== target)
+          : [...selected, target];
+        if (!nextSelected.length) {
+          renderSelectedCarriers(carriers, currentSelection);
+          return;
+        }
+        loadDashboard(nextSelected, false, true);
+      }, 200);
+    });
+
+    loadDashboard(null, true).then(loadPerCarrier);
+  </script>
+</body>
+</html>
