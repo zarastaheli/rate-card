@@ -109,6 +109,15 @@ REDO_FORCED_ON = [
 ]
 MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'DHL']
 
+def strip_after_dash(value):
+    if value is None:
+        return ""
+    text = str(value)
+    for sep in (' - ', ' – ', ' — ', '-', '–', '—'):
+        if sep in text:
+            return text.split(sep, 1)[0].strip()
+    return text
+
 BASE_DIR = Path(__file__).resolve().parent
 AMAZON_ZIP_PATH = BASE_DIR / 'Amazon Zip list  - Zip Code List.csv'
 AMAZON_ZIPS = None
@@ -169,7 +178,7 @@ def normalize_service_name(service):
     """Normalize service name for matching"""
     if not service:
         return ""
-    cleaned = str(service).replace('Â', '').replace('®', '')
+    cleaned = strip_after_dash(str(service)).replace('Â', '').replace('®', '')
     # Remove punctuation and symbols, collapse whitespace, uppercase
     normalized = re.sub(r'[^\w\s]', '', cleaned)
     normalized = re.sub(r'\s+', ' ', normalized)
@@ -179,7 +188,7 @@ def clean_shipping_service(service):
     """Normalize shipping service for cleaned column output."""
     if not service:
         return ""
-    cleaned = str(service).replace('Â', '').replace('®', '')
+    cleaned = strip_after_dash(str(service)).replace('Â', '').replace('®', '')
     cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned)
     return cleaned.upper().strip()
@@ -315,7 +324,7 @@ def available_merchant_services(raw_df, mapping_config):
 def normalize_redo_label(label):
     if not label:
         return ""
-    text = re.sub(r'\([^)]*\)', '', str(label))
+    text = re.sub(r'\([^)]*\)', '', strip_after_dash(str(label)))
     text = text.replace('Â', '').replace('®', '')
     text = re.sub(r'[^\w\s]', ' ', text)
     text = re.sub(r'\s+', ' ', text)
