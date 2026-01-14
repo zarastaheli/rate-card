@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 from app import (
     app,
+    compute_eligibility,
     normalize_service_name,
     detect_structure,
     suggest_mapping,
@@ -17,6 +18,30 @@ from app import (
     update_pricing_summary_merchant_service_levels,
     update_pricing_summary_merchant_carriers
 )
+
+def test_amazon_volume_thresholds(monkeypatch):
+    import app as app_module
+    app_module.AMAZON_ZIPS = {'12345'}
+
+    eligible = compute_eligibility('12345', 54750)
+    assert eligible['amazon_volume_eligible'] is True
+    assert eligible['amazon_eligible_final'] is True
+
+    ineligible = compute_eligibility('12345', 54749)
+    assert ineligible['amazon_volume_eligible'] is False
+    assert ineligible['amazon_eligible_final'] is False
+
+def test_uniuni_volume_thresholds(monkeypatch):
+    import app as app_module
+    app_module.UNIUNI_ZIPS = {'zip3': {'123'}, 'zip5': {'12345'}}
+
+    eligible = compute_eligibility('12345', 78300, working_days_per_year=261)
+    assert eligible['uniuni_volume_eligible'] is True
+    assert eligible['uniuni_eligible_final'] is True
+
+    ineligible = compute_eligibility('12345', 78299, working_days_per_year=261)
+    assert ineligible['uniuni_volume_eligible'] is False
+    assert ineligible['uniuni_eligible_final'] is False
 
 @pytest.fixture
 def client():

@@ -32,6 +32,9 @@ summary_jobs_lock = threading.Lock()
 # Thresholds for size/weight classification.
 SMALL_MAX_VOLUME = 1728
 MEDIUM_MAX_VOLUME = 5000
+AMAZON_DAILY_MIN = 150
+UNIUNI_WORKDAY_MIN = 300
+DEFAULT_WORKING_DAYS_PER_YEAR = 261
 WEIGHT_CLASS_BREAKS = [
     (1, '<1'),
     (5, '1-5'),
@@ -116,7 +119,7 @@ REDO_FORCED_ON = [
     "UPS Ground Saver"
 ]
 MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'DHL', 'UniUni']
-DASHBOARD_CARRIERS = ['UniUni', 'USPS Market', 'UPS', 'FedEx', 'Amazon']
+DASHBOARD_CARRIERS = ['UniUni', 'USPS Market', 'UPS Ground', 'UPS Ground Saver', 'FedEx', 'Amazon']
 
 def strip_after_dash(value):
     if value is None:
@@ -178,6 +181,14 @@ def _load_uniuni_zips():
     UNIUNI_ZIPS = {'zip3': zip3, 'zip5': zip5}
     return UNIUNI_ZIPS
 
+def get_working_days_per_year():
+    raw = os.getenv('WORKING_DAYS_PER_YEAR', str(DEFAULT_WORKING_DAYS_PER_YEAR))
+    try:
+        value = int(raw)
+    except Exception:
+        value = DEFAULT_WORKING_DAYS_PER_YEAR
+    return value if value > 0 else DEFAULT_WORKING_DAYS_PER_YEAR
+
 def is_amazon_eligible(origin_zip):
     digits = re.sub(r'\D', '', str(origin_zip or ''))
     if not digits:
@@ -188,20 +199,7 @@ def is_amazon_eligible(origin_zip):
     digits = digits[:5]
     return digits in amazon_zips
 
-def is_uniuni_eligible(origin_zip=None, mapping_config=None):
-    if mapping_config:
-        value = (
-            mapping_config.get('uniuni_eligible')
-            or mapping_config.get('uniuni_qualified')
-            or mapping_config.get('uniuni')
-        )
-        if isinstance(value, bool):
-            return value
-        if value is not None:
-            return str(value).strip().lower() in ('1', 'true', 'yes', 'y')
-        if origin_zip is None:
-            origin_zip = mapping_config.get('origin_zip')
-
+def is_uniuni_zip_eligible(origin_zip):
     digits = re.sub(r'\D', '', str(origin_zip or ''))
     if not digits:
         return False
@@ -216,6 +214,56 @@ def is_uniuni_eligible(origin_zip=None, mapping_config=None):
     if len(digits) >= 3:
         return digits[:3] in zip3
     return False
+
+def _parse_annual_orders(value):
+    if value is None or value == '':
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+def compute_eligibility(origin_zip, annual_orders, working_days_per_year=None, mapping_config=None):
+    zip_eligible_amazon = is_amazon_eligible(origin_zip)
+    zip_eligible_uniuni = is_uniuni_zip_eligible(origin_zip)
+
+    if mapping_config:
+        uniuni_override = (
+            mapping_config.get('uniuni_eligible')
+            or mapping_config.get('uniuni_qualified')
+            or mapping_config.get('uniuni')
+        )
+        if isinstance(uniuni_override, bool):
+            zip_eligible_uniuni = uniuni_override
+        elif uniuni_override is not None:
+            zip_eligible_uniuni = str(uniuni_override).strip().lower() in ('1', 'true', 'yes', 'y')
+
+    annual_orders_value = _parse_annual_orders(annual_orders)
+    if annual_orders_value is None:
+        amazon_volume_avg = 0
+        uniuni_volume_avg = 0
+    else:
+        amazon_volume_avg = annual_orders_value / 365
+        days = working_days_per_year or get_working_days_per_year()
+        uniuni_volume_avg = annual_orders_value / days
+
+    amazon_volume_eligible = amazon_volume_avg >= AMAZON_DAILY_MIN
+    uniuni_volume_eligible = uniuni_volume_avg >= UNIUNI_WORKDAY_MIN
+
+    amazon_eligible_final = zip_eligible_amazon and amazon_volume_eligible
+    uniuni_eligible_final = zip_eligible_uniuni and uniuni_volume_eligible
+
+    return {
+        'zip_eligible_amazon': zip_eligible_amazon,
+        'zip_eligible_uniuni': zip_eligible_uniuni,
+        'amazon_volume_avg': amazon_volume_avg,
+        'amazon_volume_eligible': amazon_volume_eligible,
+        'uniuni_volume_avg': uniuni_volume_avg,
+        'uniuni_volume_eligible': uniuni_volume_eligible,
+        'amazon_eligible_final': amazon_eligible_final,
+        'uniuni_eligible_final': uniuni_eligible_final,
+        'working_days_per_year': working_days_per_year or get_working_days_per_year()
+    }
 
 def default_included_services(services):
     if not services:
@@ -451,8 +499,10 @@ def _dashboard_selected_from_redo(selected_redo):
         selected.add('UniUni')
     if 'USPS Market' in selected_redo:
         selected.add('USPS Market')
-    if 'UPS Ground' in selected_redo or 'UPS Ground Saver' in selected_redo:
-        selected.add('UPS')
+    if 'UPS Ground' in selected_redo:
+        selected.add('UPS Ground')
+    if 'UPS Ground Saver' in selected_redo:
+        selected.add('UPS Ground Saver')
     if 'Amazon' in selected_redo:
         selected.add('Amazon')
     if 'FedEx' in selected_redo:
@@ -469,8 +519,9 @@ def _redo_selection_from_dashboard(selected_dashboard):
         selected.add('UNIUNI')
     if 'USPS Market' in selected_dashboard:
         selected.add('USPS MARKET')
-    if 'UPS' in selected_dashboard:
+    if 'UPS Ground' in selected_dashboard:
         selected.add('UPS GROUND')
+    if 'UPS Ground Saver' in selected_dashboard:
         selected.add('UPS GROUND SAVER')
     if 'Amazon' in selected_dashboard:
         selected.add('AMAZON')
@@ -1516,8 +1567,19 @@ def amazon_eligibility():
     try:
         data = request.json or {}
         origin_zip = data.get('origin_zip', '')
-        eligible = is_amazon_eligible(origin_zip)
-        return jsonify({'eligible': eligible})
+        annual_orders = data.get('annual_orders')
+        eligibility = compute_eligibility(origin_zip, annual_orders)
+        payload = {
+            'zip_eligible': eligibility['zip_eligible_amazon'],
+            'amazon_volume_avg': eligibility['amazon_volume_avg'],
+            'amazon_volume_eligible': eligibility['amazon_volume_eligible'],
+            'uniuni_volume_avg': eligibility['uniuni_volume_avg'],
+            'uniuni_volume_eligible': eligibility['uniuni_volume_eligible'],
+            'amazon_eligible_final': eligibility['amazon_eligible_final'],
+            'uniuni_eligible_final': eligibility['uniuni_eligible_final'],
+            'eligible': eligibility['amazon_eligible_final']
+        }
+        return jsonify(payload)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1527,8 +1589,19 @@ def uniuni_eligibility():
     try:
         data = request.json or {}
         origin_zip = data.get('origin_zip', '')
-        eligible = is_uniuni_eligible(origin_zip=origin_zip)
-        return jsonify({'eligible': eligible})
+        annual_orders = data.get('annual_orders')
+        eligibility = compute_eligibility(origin_zip, annual_orders)
+        payload = {
+            'zip_eligible': eligibility['zip_eligible_uniuni'],
+            'amazon_volume_avg': eligibility['amazon_volume_avg'],
+            'amazon_volume_eligible': eligibility['amazon_volume_eligible'],
+            'uniuni_volume_avg': eligibility['uniuni_volume_avg'],
+            'uniuni_volume_eligible': eligibility['uniuni_volume_eligible'],
+            'amazon_eligible_final': eligibility['amazon_eligible_final'],
+            'uniuni_eligible_final': eligibility['uniuni_eligible_final'],
+            'eligible': eligibility['uniuni_eligible_final']
+        }
+        return jsonify(payload)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1601,10 +1674,15 @@ def redo_carriers(job_id):
             if mapping_file.exists():
                 with open(mapping_file, 'r') as f:
                     mapping_config = json.load(f)
-            if is_amazon_eligible(mapping_config.get('origin_zip')):
+            eligibility = compute_eligibility(
+                mapping_config.get('origin_zip'),
+                mapping_config.get('annual_orders'),
+                mapping_config=mapping_config
+            )
+            if eligibility['amazon_eligible_final']:
                 if 'Amazon' not in selected:
                     selected.append('Amazon')
-            if is_uniuni_eligible(mapping_config=mapping_config):
+            if eligibility['uniuni_eligible_final']:
                 if 'UniUni' not in selected:
                     selected.append('UniUni')
 
@@ -1625,10 +1703,15 @@ def redo_carriers(job_id):
     if mapping_file.exists():
         with open(mapping_file, 'r') as f:
             mapping_config = json.load(f)
-    if is_amazon_eligible(mapping_config.get('origin_zip')):
+    eligibility = compute_eligibility(
+        mapping_config.get('origin_zip'),
+        mapping_config.get('annual_orders'),
+        mapping_config=mapping_config
+    )
+    if eligibility['amazon_eligible_final']:
         if 'Amazon' not in selected:
             selected.append('Amazon')
-    if is_uniuni_eligible(mapping_config=mapping_config):
+    if eligibility['uniuni_eligible_final']:
         if 'UniUni' not in selected:
             selected.append('UniUni')
     redo_file = job_dir / 'redo_carriers.json'
@@ -1639,9 +1722,9 @@ def redo_carriers(job_id):
         for forced in REDO_FORCED_ON:
             if forced not in selected:
                 selected.append(forced)
-        if is_amazon_eligible(mapping_config.get('origin_zip')) and 'Amazon' not in selected:
+        if eligibility['amazon_eligible_final'] and 'Amazon' not in selected:
             selected.append('Amazon')
-        if is_uniuni_eligible(mapping_config=mapping_config) and 'UniUni' not in selected:
+        if eligibility['uniuni_eligible_final'] and 'UniUni' not in selected:
             selected.append('UniUni')
 
     return jsonify({
@@ -1708,9 +1791,14 @@ def generate():
                             redo_selected = redo_config.get('selected_carriers', [])
                     else:
                         redo_selected = list(REDO_FORCED_ON)
-                        if is_amazon_eligible(mapping_config.get('origin_zip')):
+                        eligibility = compute_eligibility(
+                            mapping_config.get('origin_zip'),
+                            mapping_config.get('annual_orders'),
+                            mapping_config=mapping_config
+                        )
+                        if eligibility['amazon_eligible_final']:
                             redo_selected.append('Amazon')
-                        if is_uniuni_eligible(mapping_config=mapping_config):
+                        if eligibility['uniuni_eligible_final']:
                             redo_selected.append('UniUni')
                     selected_set = _dashboard_selected_from_redo(redo_selected)
                     selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in selected_set]
@@ -2157,9 +2245,14 @@ def dashboard_data(job_id):
             if mapping_file.exists():
                 with open(mapping_file, 'r') as f:
                     mapping_config = json.load(f)
-            if is_amazon_eligible(mapping_config.get('origin_zip')):
+            eligibility = compute_eligibility(
+                mapping_config.get('origin_zip'),
+                mapping_config.get('annual_orders'),
+                mapping_config=mapping_config
+            )
+            if eligibility['amazon_eligible_final']:
                 redo_selected.append('Amazon')
-            if is_uniuni_eligible(mapping_config=mapping_config):
+            if eligibility['uniuni_eligible_final']:
                 redo_selected.append('UniUni')
 
         selected_set = _dashboard_selected_from_redo(redo_selected)

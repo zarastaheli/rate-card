@@ -196,9 +196,28 @@
         return;
       }
 
+      merchantNameInput.value = '';
+      merchantIdInput.value = '';
+      existingCustomerCheckbox.checked = false;
+      merchantIdField.style.display = 'none';
+      originZipInput.value = '';
+      annualOrdersInput.value = '';
+      amazonEligibleIndicator.textContent = '✕';
+      amazonEligibleIndicator.classList.remove('is-eligible', 'is-ineligible');
+      uniuniEligibleIndicator.textContent = '✕';
+      uniuniEligibleIndicator.classList.remove('is-eligible', 'is-ineligible');
+      localStorage.removeItem('merchant_name');
+      localStorage.removeItem('merchant_id');
+      localStorage.removeItem('origin_zip');
+      localStorage.removeItem('annual_orders');
+
       uploadedFileName.textContent = file.name;
       uploadDefault.style.display = 'none';
       uploadSelected.style.display = 'flex';
+      merchantInfoSection.style.display = 'block';
+      detectedStructureRow.style.display = 'flex';
+      originZipField.style.display = 'block';
+      annualOrdersField.style.display = 'block';
 
       // Upload file
       const formData = new FormData();
@@ -223,35 +242,33 @@
         localStorage.setItem('detected_structure', detectedStructure);
         localStorage.setItem('merchant_name_suggestion', data.merchant_name_suggestion || '');
 
-        // Show merchant info section
-        merchantInfoSection.style.display = 'block';
         if (data.merchant_name_suggestion) {
           merchantNameInput.value = data.merchant_name_suggestion;
         }
-
-        // Show detected structure
-        detectedStructureRow.style.display = 'flex';
         amazonEligibilityField.style.display = 'none';
         uniuniEligibilityField.style.display = 'none';
         if (detectedStructure === 'zone') {
           structurePill.textContent = 'Zone-based';
           structurePill.className = 'csv-structure-pill csv-structure-pill--zone';
-          originZipField.style.display = 'block';
         } else if (detectedStructure === 'zip') {
           structurePill.textContent = 'Zip-based';
           structurePill.className = 'csv-structure-pill csv-structure-pill--zip';
-          originZipField.style.display = 'block';
         } else {
           structurePill.textContent = 'Unknown';
           structurePill.className = 'csv-structure-pill csv-structure-pill--unknown';
         }
-        annualOrdersField.style.display = 'block';
 
         updateContinueButton();
       })
       .catch(err => {
         console.error('Upload error:', err);
         alert('Error uploading file');
+        merchantInfoSection.style.display = 'none';
+        detectedStructureRow.style.display = 'none';
+        originZipField.style.display = 'none';
+        amazonEligibilityField.style.display = 'none';
+        uniuniEligibilityField.style.display = 'none';
+        annualOrdersField.style.display = 'none';
       });
     }
 
@@ -266,6 +283,22 @@
       amazonEligibilityField.style.display = 'none';
       uniuniEligibilityField.style.display = 'none';
       annualOrdersField.style.display = 'none';
+      merchantNameInput.value = '';
+      merchantIdInput.value = '';
+      existingCustomerCheckbox.checked = false;
+      originZipInput.value = '';
+      annualOrdersInput.value = '';
+      amazonEligibleIndicator.textContent = '✕';
+      amazonEligibleIndicator.classList.remove('is-eligible', 'is-ineligible');
+      uniuniEligibleIndicator.textContent = '✕';
+      uniuniEligibleIndicator.classList.remove('is-eligible', 'is-ineligible');
+      localStorage.removeItem('job_id');
+      localStorage.removeItem('detected_structure');
+      localStorage.removeItem('merchant_name_suggestion');
+      localStorage.removeItem('merchant_name');
+      localStorage.removeItem('merchant_id');
+      localStorage.removeItem('origin_zip');
+      localStorage.removeItem('annual_orders');
       jobId = null;
       updateContinueButton();
     });
@@ -290,13 +323,17 @@
     merchantNameInput.addEventListener('input', updateContinueButton);
     merchantIdInput.addEventListener('input', updateContinueButton);
     originZipInput.addEventListener('input', updateContinueButton);
-    annualOrdersInput.addEventListener('input', updateContinueButton);
+    annualOrdersInput.addEventListener('input', () => {
+      updateContinueButton();
+      originZipInput.dispatchEvent(new Event('input'));
+    });
 
     let eligibilityTimer = null;
     originZipInput.addEventListener('input', () => {
       if (eligibilityTimer) clearTimeout(eligibilityTimer);
       eligibilityTimer = setTimeout(async () => {
         const zip = originZipInput.value.trim();
+        const annualOrders = annualOrdersInput.value.trim();
         if (zip.length < 3) {
           amazonEligibilityField.style.display = 'none';
           uniuniEligibilityField.style.display = 'none';
@@ -311,7 +348,7 @@
           const response = await fetch('/api/amazon-eligibility', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ origin_zip: zip })
+            body: JSON.stringify({ origin_zip: zip, annual_orders: annualOrders })
           });
           const data = await response.json();
           if (data.error) {
@@ -333,7 +370,7 @@
           const response = await fetch('/api/uniuni-eligibility', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ origin_zip: zip })
+            body: JSON.stringify({ origin_zip: zip, annual_orders: annualOrders })
           });
           const data = await response.json();
           if (data.error) {
