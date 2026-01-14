@@ -109,7 +109,25 @@
       serviceList.innerHTML = '';
 
       const excluded = new Set(data.excluded_carriers || []);
+      const selectedCarriers = [];
+      const unselectedCarriers = [];
       data.carriers.forEach((name) => {
+        if (excluded.has(name)) {
+          unselectedCarriers.push(name);
+        } else {
+          selectedCarriers.push(name);
+        }
+      });
+      const unselectedPriority = ['Amazon', 'UniUni'];
+      unselectedCarriers.sort((a, b) => {
+        const aIdx = unselectedPriority.indexOf(a);
+        const bIdx = unselectedPriority.indexOf(b);
+        if (aIdx === -1 && bIdx === -1) return 0;
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+      [...selectedCarriers, ...unselectedCarriers].forEach((name) => {
         const checked = !excluded.has(name);
         carrierList.appendChild(renderCheckbox(name, checked));
       });
