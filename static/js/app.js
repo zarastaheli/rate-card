@@ -118,8 +118,9 @@ function initializeStep1() {
 }
 
 async function handleFileSelect(file) {
-    if (!file.name.endsWith('.csv')) {
-        alert('Please upload a CSV file');
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith('.csv') && !lowerName.endsWith('.xlsx')) {
+        alert('Please upload a CSV or XLSX file');
         return;
     }
 

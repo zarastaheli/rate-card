@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file, session
 import pandas as pd
+import numpy as np
 import openpyxl
 from openpyxl.worksheet.formula import ArrayFormula
 from openpyxl.utils.cell import range_boundaries
@@ -101,12 +102,12 @@ SERVICE_LEVELS = [
 ]
 
 REDO_CARRIERS = [
+    "UniUni",
     "USPS Market",
     "UPS Ground",
     "UPS Ground Saver",
-    "Amazon",
     "FedEx",
-    "DHL"
+    "Amazon"
 ]
 
 REDO_FORCED_ON = [
@@ -114,8 +115,8 @@ REDO_FORCED_ON = [
     "UPS Ground",
     "UPS Ground Saver"
 ]
-MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'DHL']
-DASHBOARD_CARRIERS = ['USPS Market', 'UPS', 'Amazon', 'FedEx', 'DHL']
+MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'DHL', 'UniUni']
+DASHBOARD_CARRIERS = ['UniUni', 'USPS Market', 'UPS', 'FedEx', 'Amazon']
 
 def strip_after_dash(value):
     if value is None:
@@ -129,6 +130,8 @@ def strip_after_dash(value):
 BASE_DIR = Path(__file__).resolve().parent
 AMAZON_ZIP_PATH = BASE_DIR / 'Amazon Zip list  - Zip Code List.csv'
 AMAZON_ZIPS = None
+UNIUNI_ZIP_PATH = BASE_DIR / 'UniUni Qualified Zips.txt'
+UNIUNI_ZIPS = None
 
 def _load_amazon_zips():
     global AMAZON_ZIPS
@@ -154,6 +157,27 @@ def _load_amazon_zips():
     AMAZON_ZIPS = zips
     return AMAZON_ZIPS
 
+def _load_uniuni_zips():
+    global UNIUNI_ZIPS
+    if UNIUNI_ZIPS is not None:
+        return UNIUNI_ZIPS
+    zip3 = set()
+    zip5 = set()
+    if UNIUNI_ZIP_PATH.exists():
+        try:
+            with UNIUNI_ZIP_PATH.open('r', encoding='utf-8-sig', errors='ignore') as f:
+                for line in f:
+                    digits = re.sub(r'\D', '', line.strip())
+                    if len(digits) == 3:
+                        zip3.add(digits)
+                    elif len(digits) == 5:
+                        zip5.add(digits)
+        except Exception:
+            zip3 = set()
+            zip5 = set()
+    UNIUNI_ZIPS = {'zip3': zip3, 'zip5': zip5}
+    return UNIUNI_ZIPS
+
 def is_amazon_eligible(origin_zip):
     digits = re.sub(r'\D', '', str(origin_zip or ''))
     if not digits:
@@ -163,6 +187,35 @@ def is_amazon_eligible(origin_zip):
         return any(zip_code.startswith(digits) for zip_code in amazon_zips)
     digits = digits[:5]
     return digits in amazon_zips
+
+def is_uniuni_eligible(origin_zip=None, mapping_config=None):
+    if mapping_config:
+        value = (
+            mapping_config.get('uniuni_eligible')
+            or mapping_config.get('uniuni_qualified')
+            or mapping_config.get('uniuni')
+        )
+        if isinstance(value, bool):
+            return value
+        if value is not None:
+            return str(value).strip().lower() in ('1', 'true', 'yes', 'y')
+        if origin_zip is None:
+            origin_zip = mapping_config.get('origin_zip')
+
+    digits = re.sub(r'\D', '', str(origin_zip or ''))
+    if not digits:
+        return False
+    uniuni_zips = _load_uniuni_zips()
+    zip3 = uniuni_zips.get('zip3', set())
+    zip5 = uniuni_zips.get('zip5', set())
+    if len(digits) >= 5:
+        first5 = digits[:5]
+        if first5 in zip5:
+            return True
+        return first5[:3] in zip3
+    if len(digits) >= 3:
+        return digits[:3] in zip3
+    return False
 
 def default_included_services(services):
     if not services:
@@ -286,28 +339,44 @@ def infer_redo_carrier(carrier_value, service_value):
         return 'UPS Ground Saver'
     if 'UPS' in text and 'GROUND' in text:
         return 'UPS Ground'
+    if 'UNIUNI' in text or 'UNI UNI' in text:
+        return 'UniUni'
     if 'FEDEX' in text:
         return 'FedEx'
     if 'AMAZON' in text:
         return 'Amazon'
-    if 'DHL' in text:
-        return 'DHL'
-    if 'FIRST MILE' in text:
-        if '1 3' in text or '1-3' in text or '1 TO 3' in text:
-            return 'First Mile 1-3 Days'
-        if '3 8' in text or '3-8' in text or '3 TO 8' in text:
-            return 'First Mile 3-8 Days'
-        if '2 5' in text or '2-5' in text or '2 TO 5' in text:
-            return 'First Mile 2-5 Days'
-        return 'First Mile 2-5 Days'
     return None
 
 def extract_invoice_services(raw_df, mapping_config):
-    service_col = mapping_config.get('mapping', {}).get('Shipping Service')
-    if not service_col or service_col not in raw_df.columns:
+    mapping_value = mapping_config.get('mapping', {}).get('Shipping Service')
+    normalized_cols = {
+        re.sub(r'\W+', '', str(c).strip().lower()): c for c in raw_df.columns
+    }
+    candidates = []
+    for norm, original in normalized_cols.items():
+        score = 0
+        if norm == 'shippingservice':
+            score += 100
+        if 'shipping' in norm and 'service' in norm:
+            score += 60
+        if mapping_value:
+            mapping_norm = re.sub(r'\W+', '', str(mapping_value).strip().lower())
+            if norm == mapping_norm:
+                score += 80
+        if score:
+            candidates.append((score, original))
+    if mapping_value and mapping_value in raw_df.columns:
+        candidates.append((90, mapping_value))
+    if not candidates:
         return []
-    services = raw_df[service_col].dropna().astype(str).tolist()
-    return services
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    for _, service_col in candidates:
+        if service_col not in raw_df.columns:
+            continue
+        services = raw_df[service_col].dropna().astype(str).tolist()
+        if any(s.strip() for s in services):
+            return services
+    return []
 
 def detect_redo_carriers(raw_df, mapping_config):
     carrier_col = mapping_config.get('mapping', {}).get('Shipping Carrier')
@@ -324,10 +393,28 @@ def detect_redo_carriers(raw_df, mapping_config):
 
 def available_merchant_services(raw_df, mapping_config):
     services = extract_invoice_services(raw_df, mapping_config)
+    if not services:
+        return []
     normalized_invoice = {normalize_service_name(s) for s in services if s}
     canonical_map = {normalize_service_name(s): s for s in SERVICE_LEVELS}
     available = [canonical_map[n] for n in canonical_map if n in normalized_invoice]
-    return available
+    if available:
+        return available
+    # Fallback: return unique services from invoice when no canonical match exists.
+    seen = set()
+    ordered = []
+    for service in services:
+        if not service:
+            continue
+        cleaned = str(service).replace('Â', '').replace('®', '').strip()
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        display = cleaned.upper().strip()
+        norm = re.sub(r'[^A-Z0-9]+', '', display)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        ordered.append(display)
+    return ordered
 
 def normalize_redo_label(label):
     if not label:
@@ -352,12 +439,16 @@ def normalize_merchant_carrier(value):
         return 'AMAZON'
     if 'DHL' in text:
         return 'DHL'
+    if 'UNIUNI' in text or 'UNI UNI' in text:
+        return 'UNIUNI'
     return ""
 
 def _dashboard_selected_from_redo(selected_redo):
     selected = set()
     if not selected_redo:
         return selected
+    if 'UniUni' in selected_redo:
+        selected.add('UniUni')
     if 'USPS Market' in selected_redo:
         selected.add('USPS Market')
     if 'UPS Ground' in selected_redo or 'UPS Ground Saver' in selected_redo:
@@ -374,6 +465,8 @@ def _redo_selection_from_dashboard(selected_dashboard):
     selected = set()
     if not selected_dashboard:
         return selected
+    if 'UniUni' in selected_dashboard:
+        selected.add('UNIUNI')
     if 'USPS Market' in selected_dashboard:
         selected.add('USPS MARKET')
     if 'UPS' in selected_dashboard:
@@ -448,6 +541,53 @@ def _recalc_workbook(input_path, output_dir, profile_dir=None):
         raise RuntimeError('LibreOffice did not produce an output file')
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
+def _recalc_workbooks(input_paths, output_dir, profile_dir=None):
+    if not input_paths:
+        return {}
+    soffice = shutil.which('soffice')
+    if not soffice:
+        candidate = Path('/Applications/LibreOffice.app/Contents/MacOS/soffice')
+        if candidate.exists():
+            soffice = str(candidate)
+    if not soffice:
+        raise RuntimeError('LibreOffice (soffice) not found')
+    cmd = [
+        soffice,
+        '--headless',
+        '--invisible',
+        '--nologo',
+        '--nofirststartwizard',
+        '--norestore',
+        '--nocrashreport'
+    ]
+    if profile_dir:
+        cmd.append(f"--env:UserInstallation={Path(profile_dir).resolve().as_uri()}")
+    cmd.extend(['--convert-to', 'xlsx', '--outdir', str(output_dir)])
+    cmd.extend([str(p) for p in input_paths])
+    subprocess.run(
+        cmd,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    outputs = list(Path(output_dir).glob('*.xlsx'))
+    if not outputs:
+        raise RuntimeError('LibreOffice did not produce output files')
+    by_stem = {}
+    for path in outputs:
+        by_stem.setdefault(path.stem, []).append(path)
+    mapping = {}
+    for input_path in input_paths:
+        stem = Path(input_path).stem
+        candidates = by_stem.get(stem, [])
+        if not candidates:
+            continue
+        mapping[input_path] = max(candidates, key=lambda p: p.stat().st_mtime)
+    if len(mapping) != len(input_paths):
+        missing = [p for p in input_paths if p not in mapping]
+        raise RuntimeError(f'LibreOffice did not produce output for: {missing}')
+    return mapping
+
 def _calculate_metrics(job_dir, selected_dashboard, profile_dir=None):
     rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
     if not rate_card_files:
@@ -474,8 +614,52 @@ def _calculate_metrics(job_dir, selected_dashboard, profile_dir=None):
         result_wb.close()
     return metrics
 
-def _get_lo_profile(job_dir):
-    profile_dir = (Path(tempfile.gettempdir()) / f"lo-profile-{Path(job_dir).name}").resolve()
+def _calculate_metrics_batch(job_dir, selections, profile_dir=None):
+    rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+    if not rate_card_files:
+        raise FileNotFoundError('Rate card not found')
+    source_path = rate_card_files[0]
+    results = {}
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        input_paths = []
+        key_to_input = {}
+        for key, selected_dashboard in selections.items():
+            safe_key = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(key)).strip('_') or 'selection'
+            temp_input = tmp_dir_path / f"{safe_key}-{source_path.name}"
+            shutil.copy2(source_path, temp_input)
+
+            wb = openpyxl.load_workbook(temp_input, data_only=False)
+            if 'Pricing & Summary' not in wb.sheetnames:
+                wb.close()
+                raise ValueError('Pricing & Summary sheet not found')
+            ws = wb['Pricing & Summary']
+            _apply_redo_selection(ws, selected_dashboard)
+            wb.save(temp_input)
+            wb.close()
+
+            input_paths.append(temp_input)
+            key_to_input[key] = temp_input
+
+        output_map = _recalc_workbooks(input_paths, tmp_dir_path, profile_dir=profile_dir)
+        for key, input_path in key_to_input.items():
+            output_path = output_map.get(input_path)
+            if not output_path:
+                results[key] = {}
+                continue
+            result_wb = openpyxl.load_workbook(output_path, data_only=True, read_only=True)
+            result_ws = result_wb['Pricing & Summary']
+            results[key] = _read_summary_metrics(result_ws)
+            result_wb.close()
+    return results
+
+def _get_lo_profile(job_dir, suffix=None):
+    base_name = Path(job_dir).name
+    if suffix:
+        safe_suffix = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(suffix)).strip('_')
+        if safe_suffix:
+            base_name = f"{base_name}-{safe_suffix}"
+    profile_dir = (Path(tempfile.gettempdir()) / f"lo-profile-{base_name}").resolve()
     lock_path = profile_dir / 'lock'
     if lock_path.exists():
         try:
@@ -554,21 +738,20 @@ def _write_breakdown_cache(job_dir, source_mtime, per_carrier, complete=True):
 
 def _build_breakdown_cache(job_dir, source_mtime, job_key):
     try:
+        selections = {carrier: [carrier] for carrier in DASHBOARD_CARRIERS}
+        profile_dir = _get_lo_profile(job_dir, suffix='breakdown')
+        try:
+            metrics_map = _calculate_metrics_batch(job_dir, selections, profile_dir)
+        except subprocess.CalledProcessError:
+            metrics_map = _calculate_metrics_batch(job_dir, selections, profile_dir=None)
+        except Exception:
+            metrics_map = {}
+
         per_carrier = []
-        profile_dir = _get_lo_profile(job_dir)
         for carrier in DASHBOARD_CARRIERS:
-            try:
-                try:
-                    metrics = _calculate_metrics(job_dir, [carrier], profile_dir)
-                except subprocess.CalledProcessError:
-                    metrics = _calculate_metrics(job_dir, [carrier], profile_dir=None)
-                per_carrier.append({
-                    'carrier': carrier,
-                    'metrics': metrics
-                })
-                _write_breakdown_cache(job_dir, source_mtime, per_carrier, complete=False)
-            finally:
-                pass
+            metrics = metrics_map.get(carrier, {})
+            per_carrier.append({'carrier': carrier, 'metrics': metrics})
+            _write_breakdown_cache(job_dir, source_mtime, per_carrier, complete=False)
         _write_breakdown_cache(job_dir, source_mtime, per_carrier, complete=True)
     finally:
         with dashboard_jobs_lock:
@@ -608,6 +791,13 @@ def _start_summary_cache(job_dir, source_mtime, selected_dashboard):
     cached = _read_summary_cache(job_dir, source_mtime, selection_key)
     if cached is not None:
         return cached, False
+    if selected_dashboard and len(selected_dashboard) == 1:
+        breakdown_cached, _ = _read_breakdown_cache(job_dir, source_mtime)
+        if breakdown_cached:
+            carrier = selected_dashboard[0]
+            for entry in breakdown_cached:
+                if entry.get('carrier') == carrier:
+                    return entry.get('metrics', {}), False
     job_key = f"{job_dir.name}:{source_mtime}:{selection_key}"
     with summary_jobs_lock:
         if job_key not in summary_jobs:
@@ -779,9 +969,15 @@ def suggest_mapping(invoice_columns, standard_field):
     invoice_lower = [c.lower() for c in invoice_columns]
     field_lower = standard_field.lower()
     
+    def _is_bad_label_cost(col_text):
+        bad_tokens = ('insurance', 'labelcreatedate', 'create date', 'createdate', 'shipdate', 'date')
+        return any(token in col_text for token in bad_tokens)
+
     # Exact match
     for i, col in enumerate(invoice_lower):
         if field_lower in col or col in field_lower:
+            if standard_field == 'Label Cost' and _is_bad_label_cost(col):
+                continue
             return invoice_columns[i]
     
     # Partial matches
@@ -791,17 +987,38 @@ def suggest_mapping(invoice_columns, standard_field):
         'Zip': ['zip', 'postal', 'postal_code'],
         'Weight (oz)': ['weight', 'oz', 'ounces'],
         'Shipping Carrier': ['carrier'],
-        'Shipping Service': ['service', 'shipping_service'],
+        'Shipping Service': ['service', 'shipping_service', 'shippingservice'],
         'Package Height': ['height'],
         'Package Width': ['width'],
         'Package Length': ['length'],
-        'Label Cost': ['cost', 'shipping_rate', 'rate', 'label']
+        'Label Cost': ['cost', 'shipping_rate', 'rate', 'label', 'carrier fee', 'carrier_fee', 'fee']
     }
     
     if standard_field in keywords:
+        if standard_field == 'Label Cost':
+            candidates = []
+            for i, col in enumerate(invoice_lower):
+                if _is_bad_label_cost(col):
+                    continue
+                score = 0
+                if 'carrier fee' in col or 'carrier_fee' in col:
+                    score += 100
+                if 'fee' in col:
+                    score += 30
+                if 'rate' in col or 'shipping_rate' in col:
+                    score += 20
+                if 'cost' in col or 'label' in col:
+                    score += 10
+                if score:
+                    candidates.append((score, i))
+            if candidates:
+                candidates.sort(reverse=True)
+                return invoice_columns[candidates[0][1]]
         for keyword in keywords[standard_field]:
             for i, col in enumerate(invoice_lower):
                 if keyword in col:
+                    if standard_field == 'Label Cost' and _is_bad_label_cost(col):
+                        continue
                     return invoice_columns[i]
     
     return None
@@ -987,8 +1204,75 @@ def upload():
         
         # Save uploaded file
         filename = secure_filename(file.filename)
+        ext = Path(filename).suffix.lower()
         raw_csv_path = job_dir / 'raw_invoice.csv'
-        file.save(raw_csv_path)
+        if ext == '.xlsx':
+            raw_xlsx_path = job_dir / 'raw_invoice.xlsx'
+            file.save(raw_xlsx_path)
+            try:
+                sheets = pd.read_excel(raw_xlsx_path, sheet_name=None, dtype=str)
+            except Exception as e:
+                return jsonify({'error': f'Failed to read XLSX: {str(e)}'}), 400
+            if not sheets:
+                return jsonify({'error': 'XLSX file has no readable sheets'}), 400
+
+            def score_sheet(df):
+                columns = [str(c).strip().lower() for c in df.columns if c is not None]
+                if not columns:
+                    return 0
+                keywords = ('service', 'carrier', 'shipping', 'order', 'zip', 'postal', 'weight', 'zone')
+                keyword_hits = sum(1 for c in columns if any(k in c for k in keywords))
+                non_empty_cols = sum(1 for c in columns if c)
+                return keyword_hits * 10 + non_empty_cols
+
+            df_upload = max(sheets.values(), key=score_sheet)
+            df_upload.columns = [
+                str(c).strip() if c is not None else ''
+                for c in df_upload.columns
+            ]
+            def _ensure_shipping_service_column(frame):
+                normalized = {
+                    re.sub(r'\W+', '', str(c).strip().lower()): c for c in frame.columns
+                }
+                if 'shippingservice' in normalized:
+                    return frame
+                if frame.shape[1] > 28:
+                    cols = list(frame.columns)
+                    cols[28] = 'ShippingService'
+                    frame.columns = cols
+                return frame
+
+            df_upload = _ensure_shipping_service_column(df_upload)
+            normalized_cols = {
+                re.sub(r'\W+', '', str(c).strip().lower()): c for c in df_upload.columns
+            }
+            if 'shippingservice' not in normalized_cols and 'shipping_service' not in normalized_cols:
+                raw_sheet_name = None
+                for name, sheet_df in sheets.items():
+                    if sheet_df is df_upload:
+                        raw_sheet_name = name
+                        break
+                if raw_sheet_name is None:
+                    raw_sheet_name = list(sheets.keys())[0]
+                df_raw = pd.read_excel(raw_xlsx_path, sheet_name=raw_sheet_name, header=None, dtype=str)
+                header_row = None
+                for idx in range(min(20, len(df_raw))):
+                    row_values = df_raw.iloc[idx].fillna('').astype(str)
+                    normalized_row = [
+                        re.sub(r'\W+', '', val.strip().lower()) for val in row_values
+                    ]
+                    if any('shippingservice' in val or ('shipping' in val and 'service' in val) for val in normalized_row):
+                        header_row = idx
+                        break
+                if header_row is not None:
+                    header_values = df_raw.iloc[header_row].fillna('').astype(str).tolist()
+                    df_upload = df_raw.iloc[header_row + 1:].copy()
+                    df_upload.columns = [str(c).strip() for c in header_values]
+                    df_upload = df_upload.loc[:, df_upload.columns != '']
+                    df_upload = _ensure_shipping_service_column(df_upload)
+            df_upload.to_csv(raw_csv_path, index=False)
+        else:
+            file.save(raw_csv_path)
         
         # Detect structure
         structure = detect_structure(raw_csv_path)
@@ -997,14 +1281,8 @@ def upload():
         df = pd.read_csv(raw_csv_path, nrows=5)
         columns = list(df.columns)
         
-        # Try to suggest merchant name from first row
+        # Merchant name is manual; do not auto-suggest.
         merchant_name_suggestion = None
-        if len(df) > 0:
-            # Look for common merchant name columns
-            for col in ['Market Store Name', 'StoreName', 'Merchant Name', 'Store Name']:
-                if col in df.columns and df[col].iloc[0]:
-                    merchant_name_suggestion = str(df[col].iloc[0]).strip()
-                    break
         
         return jsonify({
             'job_id': job_id,
@@ -1098,64 +1376,83 @@ def mapping():
                 break
 
         if country_series is not None:
-            normalized_df['TWO_LETTER_COUNTRY_CODE'] = country_series.apply(normalize_country_code)
-            normalized_df['FULL_COUNTRY_NAME'] = country_series.apply(normalize_country_name)
+            country_str = country_series.fillna("").astype(str).str.strip()
+            country_upper = country_str.str.upper()
+            is_two_letter = country_upper.str.len().eq(2) & country_upper.str.isalpha()
+
+            mapped_codes = country_upper.map(COUNTRY_NAME_TO_CODE).fillna("")
+            normalized_df['TWO_LETTER_COUNTRY_CODE'] = np.where(
+                is_two_letter, country_upper, mapped_codes
+            )
+            normalized_df['FULL_COUNTRY_NAME'] = np.where(
+                is_two_letter,
+                country_upper.map(CODE_TO_COUNTRY_NAME).fillna(""),
+                country_str
+            )
         else:
             normalized_df['TWO_LETTER_COUNTRY_CODE'] = ""
             normalized_df['FULL_COUNTRY_NAME'] = ""
 
-        def safe_cell(value):
-            if value is None:
-                return ""
-            if isinstance(value, float) and pd.isna(value):
-                return ""
-            return str(value).strip()
+        two_letter = normalized_df['TWO_LETTER_COUNTRY_CODE'].fillna("").astype(str)
+        full_name = normalized_df['FULL_COUNTRY_NAME'].fillna("").astype(str)
+        mapped_from_name = full_name.str.upper().map(COUNTRY_NAME_TO_CODE).fillna("")
+        zip_series = normalized_df['Zip'] if 'Zip' in normalized_df.columns else pd.Series([""] * len(normalized_df))
+        zip_match = zip_series.fillna("").astype(str).str.extract(r'(\d{5})', expand=False)
+        has_zip = zip_match.notna()
 
-        def calc_country_code(row):
-            code = safe_cell(row.get('TWO_LETTER_COUNTRY_CODE'))
-            if code:
-                return code
-            name = safe_cell(row.get('FULL_COUNTRY_NAME'))
-            if name:
-                derived = normalize_country_code(name)
-                return derived
-            dest_zip = row.get('Zip')
-            if extract_zip5(dest_zip):
-                return 'US'
-            return ""
-
-        normalized_df['CALCULATED_TWO_LETTER_COUNTRY_CODE'] = normalized_df.apply(calc_country_code, axis=1)
+        calculated_code = two_letter.mask(two_letter.eq(""), mapped_from_name)
+        calculated_code = calculated_code.mask(calculated_code.eq(""), np.where(has_zip, "US", ""))
+        normalized_df['CALCULATED_TWO_LETTER_COUNTRY_CODE'] = calculated_code
 
         shipping_service_series = (
             normalized_df['Shipping Service']
             if 'Shipping Service' in normalized_df.columns
             else pd.Series([""] * len(normalized_df))
         )
-        normalized_df['CLEANED_SHIPPING_SERVICE'] = shipping_service_series.apply(clean_shipping_service)
-        normalized_df['SHIPPING_PRIORITY'] = normalized_df['CLEANED_SHIPPING_SERVICE'].apply(calculate_shipping_priority)
+        cleaned_service = shipping_service_series.fillna("").astype(str)
+        cleaned_service = cleaned_service.str.replace('Â', '', regex=False).str.replace('®', '', regex=False)
+        cleaned_service = cleaned_service.str.split(r'\s*[-–—]\s*', n=1, expand=True)[0]
+        cleaned_service = cleaned_service.str.replace(r'[^\w\s]', ' ', regex=True)
+        cleaned_service = cleaned_service.str.replace(r'\s+', ' ', regex=True).str.upper().str.strip()
+        normalized_df['CLEANED_SHIPPING_SERVICE'] = cleaned_service
 
-        def ounces_to_lbs(value):
-            weight_oz = to_float(value)
-            if weight_oz is None:
-                return None
-            return round(weight_oz / 16, 4)
+        priority = pd.Series([""] * len(normalized_df))
+        non_empty = cleaned_service.ne("")
+        priority = priority.mask(non_empty & cleaned_service.str.contains('GROUND', regex=False), 'GROUND')
+        air_mask = non_empty & cleaned_service.str.contains(r'2ND DAY|2 DAY|2DAY', regex=True)
+        priority = priority.mask(priority.eq("") & air_mask, 'AIR')
+        exp_mask = non_empty & cleaned_service.str.contains('EXPEDITED', regex=False)
+        priority = priority.mask(priority.eq("") & exp_mask, 'EXPEDITED')
+        priority = priority.mask((priority.eq("")) & non_empty, 'OTHER')
+        normalized_df['SHIPPING_PRIORITY'] = priority
 
         if 'Weight (oz)' in normalized_df.columns:
-            normalized_df['WEIGHT_IN_LBS'] = normalized_df['Weight (oz)'].apply(ounces_to_lbs)
+            weight_oz = pd.to_numeric(normalized_df['Weight (oz)'], errors='coerce')
+            normalized_df['WEIGHT_IN_LBS'] = (weight_oz / 16).round(4)
         else:
-            normalized_df['WEIGHT_IN_LBS'] = None
+            normalized_df['WEIGHT_IN_LBS'] = pd.Series([None] * len(normalized_df))
 
-        def calc_volume(row):
-            length = to_float(row.get('Package Length'))
-            width = to_float(row.get('Package Width'))
-            height = to_float(row.get('Package Height'))
-            if length is None or width is None or height is None:
-                return None
-            return length * width * height
+        def _numeric_series(series_name):
+            if series_name in normalized_df.columns:
+                return pd.to_numeric(normalized_df[series_name], errors='coerce')
+            return pd.Series([None] * len(normalized_df))
 
-        normalized_df['PACKAGE_DIMENSION_VOLUME'] = normalized_df.apply(calc_volume, axis=1)
-        normalized_df['PACKAGE_SIZE_STATUS'] = normalized_df['PACKAGE_DIMENSION_VOLUME'].apply(classify_package_size)
-        normalized_df['WEIGHT_CLASSIFICATION'] = normalized_df['WEIGHT_IN_LBS'].apply(classify_weight)
+        length = _numeric_series('Package Length')
+        width = _numeric_series('Package Width')
+        height = _numeric_series('Package Height')
+        volume = length * width * height
+        normalized_df['PACKAGE_DIMENSION_VOLUME'] = volume
+
+        size_bins = [-float('inf'), SMALL_MAX_VOLUME, MEDIUM_MAX_VOLUME, float('inf')]
+        size_labels = ['SMALL', 'MEDIUM', 'LARGE']
+        size_class = pd.cut(volume, bins=size_bins, labels=size_labels, right=False)
+        normalized_df['PACKAGE_SIZE_STATUS'] = size_class.where(volume.notna(), "")
+
+        weight_lbs = normalized_df['WEIGHT_IN_LBS']
+        weight_bins = [-float('inf'), 1, 5, 10, float('inf')]
+        weight_labels = ['<1', '1-5', '5-10', '10+']
+        weight_class = pd.cut(weight_lbs, bins=weight_bins, labels=weight_labels, right=False)
+        normalized_df['WEIGHT_CLASSIFICATION'] = weight_class.where(weight_lbs.notna(), "")
 
         origin_zip_value = extract_origin_zip(origin_zip)
         normalized_df['ORIGIN_ZIP_CODE'] = [origin_zip_value] * len(normalized_df)
@@ -1224,6 +1521,17 @@ def amazon_eligibility():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/uniuni-eligibility', methods=['POST'])
+def uniuni_eligibility():
+    """Return UniUni eligibility based on origin ZIP."""
+    try:
+        data = request.json or {}
+        origin_zip = data.get('origin_zip', '')
+        eligible = is_uniuni_eligible(origin_zip=origin_zip)
+        return jsonify({'eligible': eligible})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/merchant-pricing/<job_id>', methods=['GET', 'POST'])
 def merchant_pricing(job_id):
     """Get or save merchant pricing selections."""
@@ -1285,17 +1593,20 @@ def redo_carriers(job_id):
     if not job_dir.exists():
         return jsonify({'error': 'Job not found'}), 404
 
-    if request.method == 'POST':
-        data = request.json or {}
-        selected = data.get('selected_carriers', [])
-        selected = [c for c in selected if c in REDO_CARRIERS]
-        mapping_file = job_dir / 'mapping.json'
-        if mapping_file.exists():
-            with open(mapping_file, 'r') as f:
-                mapping_config = json.load(f)
+        if request.method == 'POST':
+            data = request.json or {}
+            selected = data.get('selected_carriers', [])
+            selected = [c for c in selected if c in REDO_CARRIERS]
+            mapping_file = job_dir / 'mapping.json'
+            if mapping_file.exists():
+                with open(mapping_file, 'r') as f:
+                    mapping_config = json.load(f)
             if is_amazon_eligible(mapping_config.get('origin_zip')):
                 if 'Amazon' not in selected:
                     selected.append('Amazon')
+            if is_uniuni_eligible(mapping_config=mapping_config):
+                if 'UniUni' not in selected:
+                    selected.append('UniUni')
 
         with open(job_dir / 'redo_carriers.json', 'w') as f:
             json.dump({'selected_carriers': selected}, f)
@@ -1314,14 +1625,24 @@ def redo_carriers(job_id):
     if mapping_file.exists():
         with open(mapping_file, 'r') as f:
             mapping_config = json.load(f)
-        if is_amazon_eligible(mapping_config.get('origin_zip')):
-            if 'Amazon' not in selected:
-                selected.append('Amazon')
+    if is_amazon_eligible(mapping_config.get('origin_zip')):
+        if 'Amazon' not in selected:
+            selected.append('Amazon')
+    if is_uniuni_eligible(mapping_config=mapping_config):
+        if 'UniUni' not in selected:
+            selected.append('UniUni')
     redo_file = job_dir / 'redo_carriers.json'
     if redo_file.exists():
         with open(redo_file, 'r') as f:
             saved = json.load(f)
             selected = saved.get('selected_carriers', list(REDO_FORCED_ON))
+        for forced in REDO_FORCED_ON:
+            if forced not in selected:
+                selected.append(forced)
+        if is_amazon_eligible(mapping_config.get('origin_zip')) and 'Amazon' not in selected:
+            selected.append('Amazon')
+        if is_uniuni_eligible(mapping_config=mapping_config) and 'UniUni' not in selected:
+            selected.append('UniUni')
 
     return jsonify({
         'detected_carriers': available,
@@ -1389,6 +1710,8 @@ def generate():
                         redo_selected = list(REDO_FORCED_ON)
                         if is_amazon_eligible(mapping_config.get('origin_zip')):
                             redo_selected.append('Amazon')
+                        if is_uniuni_eligible(mapping_config=mapping_config):
+                            redo_selected.append('UniUni')
                     selected_set = _dashboard_selected_from_redo(redo_selected)
                     selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in selected_set]
                     if selected_dashboard:
@@ -1435,7 +1758,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     write_progress(job_dir, 'normalize', True)
     
     # Copy template to output location first to preserve file structure
-    template_path = Path('Rate Card Template.xlsx')
+    template_path = Path('#New Template - Rate Card.xlsx')
+    if not template_path.exists():
+        template_path = Path('Rate Card Template.xlsx')
     if not template_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_path}")
     
@@ -1832,8 +2157,10 @@ def dashboard_data(job_id):
             if mapping_file.exists():
                 with open(mapping_file, 'r') as f:
                     mapping_config = json.load(f)
-                if is_amazon_eligible(mapping_config.get('origin_zip')):
-                    redo_selected.append('Amazon')
+            if is_amazon_eligible(mapping_config.get('origin_zip')):
+                redo_selected.append('Amazon')
+            if is_uniuni_eligible(mapping_config=mapping_config):
+                redo_selected.append('UniUni')
 
         selected_set = _dashboard_selected_from_redo(redo_selected)
         selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in selected_set]
@@ -1850,18 +2177,20 @@ def dashboard_data(job_id):
         per_carrier = []
         include_per_carrier = request.args.get('per_carrier') == '1'
         if request.method == 'GET' and include_per_carrier:
+            cached, pending = _start_breakdown_cache(job_dir, source_mtime)
             if summary_pending:
+                per_carrier = cached or []
+                per_carrier_count = len(per_carrier)
                 return jsonify({
                     'selected_carriers': selected_dashboard,
                     'available_carriers': DASHBOARD_CARRIERS,
                     'overall': overall_metrics,
-                    'per_carrier': [],
-                    'pending': True,
+                    'per_carrier': per_carrier,
+                    'pending': pending,
                     'summary_pending': True,
-                    'per_carrier_count': 0,
+                    'per_carrier_count': per_carrier_count,
                     'per_carrier_total': len(DASHBOARD_CARRIERS)
                 })
-            cached, pending = _start_breakdown_cache(job_dir, source_mtime)
             per_carrier = cached or []
             per_carrier_count = len(per_carrier)
             return jsonify({

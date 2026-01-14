@@ -66,6 +66,7 @@
     const noDetected = document.getElementById('no-detected');
     const continueBtn = document.getElementById('continue-btn');
     const backBtn = document.getElementById('back-btn');
+    let detectedCarriers = [];
 
     function renderCarrierItem(name, checked, disabled) {
       const item = document.createElement('div');
@@ -91,6 +92,26 @@
       return item;
     }
 
+    function renderCarrierList(selectedSet) {
+      selectableList.innerHTML = '';
+      selectableList.classList.remove('service-list--split');
+
+      const selected = [];
+      const unselected = [];
+      detectedCarriers.forEach((name) => {
+        if (selectedSet.has(name)) {
+          selected.push(name);
+        } else {
+          unselected.push(name);
+        }
+      });
+
+      [...selected, ...unselected].forEach((name) => {
+        const checked = selectedSet.has(name);
+        selectableList.appendChild(renderCarrierItem(name, checked, false));
+      });
+    }
+
     async function loadRedoCarriers() {
       const response = await fetch(`/api/redo-carriers/${jobId}`);
       const data = await response.json();
@@ -99,16 +120,14 @@
         return;
       }
 
-      selectableList.innerHTML = '';
+      detectedCarriers = data.detected_carriers || [];
       const selected = new Set(data.selected_carriers || data.default_selected || []);
 
-      if (!data.detected_carriers.length) {
+      if (!detectedCarriers.length) {
         noDetected.style.display = 'block';
       } else {
         noDetected.style.display = 'none';
-        data.detected_carriers.forEach(name => {
-          selectableList.appendChild(renderCarrierItem(name, selected.has(name), false));
-        });
+        renderCarrierList(selected);
       }
     }
 
@@ -131,6 +150,15 @@
 
     backBtn.addEventListener('click', () => {
       window.location.href = `/merchant-pricing?job_id=${jobId}`;
+    });
+
+    selectableList.addEventListener('change', () => {
+      if (!detectedCarriers.length) return;
+      const selected = new Set(
+        Array.from(selectableList.querySelectorAll('.service-checkbox:checked'))
+          .map((input) => input.value)
+      );
+      renderCarrierList(selected);
     });
 
     document.addEventListener('DOMContentLoaded', loadRedoCarriers);

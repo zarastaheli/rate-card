@@ -47,8 +47,8 @@
           <p class="subtitle">Overview and carrier breakdown based on your selections</p>
         </div>
         <div class="dashboard-actions">
-          <button class="button button-primary button-no-shadow" type="button" id="download-btn">Download rate card</button>
-          <button class="button button-secondary" type="button" id="sharepoint-btn">View file in SharePoint</button>
+          <button class="button button-primary button-no-shadow" type="button" id="download-btn">Download Rate Card</button>
+          <button class="button button-secondary" type="button" id="sharepoint-btn">View File In Sharepoint</button>
         </div>
       </div>
 
@@ -65,24 +65,39 @@
 
       <div class="summary-grid" id="summary-grid">
         <div class="metric-card">
-          <div class="metric-label">Est. Merchant Annual Savings</div>
-          <div class="metric-value" id="metric-merchant-savings">--</div>
+          <div class="metric-main">
+            <div class="metric-label">Est. Merchant Annual Savings</div>
+            <div class="metric-value" id="metric-merchant-savings">--</div>
+          </div>
+          <div class="metric-note">Estimate</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Est. Redo Deal Size</div>
-          <div class="metric-value" id="metric-redo-deal-size">--</div>
+          <div class="metric-main">
+            <div class="metric-label">Est. Redo Deal Size</div>
+            <div class="metric-value" id="metric-redo-deal-size">--</div>
+          </div>
+          <div class="metric-note metric-note--placeholder"></div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Spread Available</div>
-          <div class="metric-value" id="metric-spread-available">--</div>
+          <div class="metric-main">
+            <div class="metric-label">Total Spread Avaliable</div>
+            <div class="metric-value" id="metric-spread-available">--</div>
+          </div>
+          <div class="metric-note metric-note--placeholder"></div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">% Orders We Could Win</div>
-          <div class="metric-value" id="metric-orders-could-win">--</div>
+          <div class="metric-main">
+            <div class="metric-label">% Orders We Could Win</div>
+            <div class="metric-value" id="metric-orders-could-win">--</div>
+          </div>
+          <div class="metric-note metric-note--placeholder"></div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">% Orders Won w/ Spread</div>
-          <div class="metric-value" id="metric-orders-won-spread">--</div>
+          <div class="metric-main">
+            <div class="metric-label">% Orders Won W/ Spread</div>
+            <div class="metric-value" id="metric-orders-won-spread">--</div>
+          </div>
+          <div class="metric-note metric-note--placeholder"></div>
         </div>
       </div>
 
@@ -93,16 +108,16 @@
             <div>Carrier</div>
             <div>Est. Merchant Annual Savings</div>
             <div>Est. Redo Deal Size</div>
-            <div>Spread Available</div>
+            <div>Total Spread Avaliable</div>
             <div>% Orders We Could Win</div>
-            <div>% Orders Won w/ Spread</div>
+            <div>% Orders Won W/ Spread</div>
           </div>
           <div class="breakdown-loading" id="breakdown-loading">Loading carrier breakdown...</div>
           <div id="carrier-breakdown"></div>
         </div>
       </div>
 
-      <div class="dashboard-footnote">All figures are estimates</div>
+      <div class="dashboard-footnote dashboard-footnote--alert">All Figures Are Estimates - Final Deal Size Will Be Determined By Deal Desk</div>
       </div>
 
       </div>
@@ -180,28 +195,28 @@
       const container = document.getElementById('carrier-breakdown');
       container.innerHTML = '';
       const columns = [
-        'Est. Merchant Annual Savings',
-        'Est. Redo Deal Size',
-        'Spread Available',
-        '% Orders We Could Win',
-        '% Orders Won W/ Spread'
+        { key: 'Est. Merchant Annual Savings', label: 'Est. Merchant Annual Savings' },
+        { key: 'Est. Redo Deal Size', label: 'Est. Redo Deal Size' },
+        { key: 'Spread Available', label: 'Total Spread Avaliable' },
+        { key: '% Orders We Could Win', label: '% Orders We Could Win' },
+        { key: '% Orders Won W/ Spread', label: '% Orders Won W/ Spread' }
       ];
       const maxValues = {};
-      columns.forEach((label) => {
+      columns.forEach(({ key }) => {
         const values = perCarrier
-          .map(row => parseMetricValue((row.metrics || {})[label]))
+          .map(row => parseMetricValue((row.metrics || {})[key]))
           .filter(val => val !== null);
-        maxValues[label] = values.length ? Math.max(...values) : null;
+        maxValues[key] = values.length ? Math.max(...values) : null;
       });
       perCarrier.forEach((row) => {
         const metrics = row.metrics || {};
         const rowEl = document.createElement('div');
         rowEl.className = 'breakdown-row';
-        const formatWithHighlight = (label) => {
-          const raw = metrics[label];
-          const formatted = formatMetric(label, raw);
+        const formatWithHighlight = (key) => {
+          const raw = metrics[key];
+          const formatted = formatMetric(key, raw);
           const numeric = parseMetricValue(raw);
-          const max = maxValues[label];
+          const max = maxValues[key];
           if (numeric !== null && max !== null && numeric === max) {
             return `<span class="metric-pill">${formatted}</span>`;
           }

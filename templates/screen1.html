@@ -46,7 +46,7 @@
       <!-- Header -->
       <div class="page-header">
         <h1>Upload Raw Invoice</h1>
-        <p class="subtitle">Upload your carrier invoice CSV file to begin</p>
+          <p class="subtitle">Upload your carrier invoice CSV or XLSX file to begin</p>
       </div>
 
       <div class="detected-structure-row" id="detected-structure-row" style="display: none; margin-bottom: 16px;">
@@ -67,7 +67,7 @@
         </div>
         <div class="upload-default" id="upload-default">
           <p class="upload-title">Click to upload or drag and drop</p>
-          <p class="upload-subtitle">CSV files only (max 50MB)</p>
+          <p class="upload-subtitle">CSV or XLSX files only (max 50MB)</p>
         </div>
         <div class="upload-selected" id="upload-selected" style="display: none;">
           <div class="uploaded-header">
@@ -79,7 +79,7 @@
             <button type="button" class="replace-file-button" id="replace-file-btn">Replace file</button>
           </div>
         </div>
-        <input type="file" class="file-input" id="file-input" accept=".csv" />
+        <input type="file" class="file-input" id="file-input" accept=".csv,.xlsx" />
       </div>
 
       <!-- Merchant Info (shown after upload) -->
@@ -106,6 +106,12 @@
           <div class="form-row form-row-inline">
             <span class="eligibility-indicator" id="amazon-eligible-indicator">✕</span>
             <span class="field-label" id="amazon-eligible-text">Amazon Eligible</span>
+          </div>
+        </div>
+        <div class="form-field" id="uniuni-eligibility-field" style="display: none; margin-top: 12px;">
+          <div class="form-row form-row-inline">
+            <span class="eligibility-indicator" id="uniuni-eligible-indicator">✕</span>
+            <span class="field-label" id="uniuni-eligible-text">UniUni Eligible</span>
           </div>
         </div>
         <div class="form-field" id="annual-orders-field" style="display: none; margin-top: 16px;">
@@ -143,6 +149,9 @@
     const amazonEligibilityField = document.getElementById('amazon-eligibility-field');
     const amazonEligibleIndicator = document.getElementById('amazon-eligible-indicator');
     const amazonEligibleText = document.getElementById('amazon-eligible-text');
+    const uniuniEligibilityField = document.getElementById('uniuni-eligibility-field');
+    const uniuniEligibleIndicator = document.getElementById('uniuni-eligible-indicator');
+    const uniuniEligibleText = document.getElementById('uniuni-eligible-text');
     const annualOrdersField = document.getElementById('annual-orders-field');
     const annualOrdersInput = document.getElementById('annual-orders');
     const continueBtn = document.getElementById('continue-btn');
@@ -176,10 +185,11 @@
       const file = fileInput.files[0];
       if (!file) return;
 
-      if (!file.name.toLowerCase().endsWith('.csv')) {
-        alert('Please upload a CSV file');
-        return;
-      }
+        const lowerName = file.name.toLowerCase();
+        if (!lowerName.endsWith('.csv') && !lowerName.endsWith('.xlsx')) {
+          alert('Please upload a CSV or XLSX file');
+          return;
+        }
 
       if (file.size > 50 * 1024 * 1024) {
         alert('File size must be less than 50MB');
@@ -222,6 +232,7 @@
         // Show detected structure
         detectedStructureRow.style.display = 'flex';
         amazonEligibilityField.style.display = 'none';
+        uniuniEligibilityField.style.display = 'none';
         if (detectedStructure === 'zone') {
           structurePill.textContent = 'Zone-based';
           structurePill.className = 'csv-structure-pill csv-structure-pill--zone';
@@ -253,6 +264,7 @@
       detectedStructureRow.style.display = 'none';
       originZipField.style.display = 'none';
       amazonEligibilityField.style.display = 'none';
+      uniuniEligibilityField.style.display = 'none';
       annualOrdersField.style.display = 'none';
       jobId = null;
       updateContinueButton();
@@ -287,8 +299,11 @@
         const zip = originZipInput.value.trim();
         if (zip.length < 3) {
           amazonEligibilityField.style.display = 'none';
+          uniuniEligibilityField.style.display = 'none';
           amazonEligibleIndicator.textContent = '✕';
           amazonEligibleIndicator.classList.remove('is-eligible', 'is-ineligible');
+          uniuniEligibleIndicator.textContent = '✕';
+          uniuniEligibleIndicator.classList.remove('is-eligible', 'is-ineligible');
           return;
         }
         try {
@@ -312,6 +327,28 @@
           amazonEligibleIndicator.textContent = '✕';
           amazonEligibleIndicator.classList.remove('is-eligible');
           amazonEligibleIndicator.classList.add('is-ineligible');
+        }
+        try {
+          uniuniEligibilityField.style.display = 'block';
+          const response = await fetch('/api/uniuni-eligibility', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ origin_zip: zip })
+          });
+          const data = await response.json();
+          if (data.error) {
+            uniuniEligibleIndicator.textContent = '✕';
+            uniuniEligibleIndicator.classList.remove('is-eligible');
+            uniuniEligibleIndicator.classList.add('is-ineligible');
+            return;
+          }
+          uniuniEligibleIndicator.textContent = data.eligible ? '✓' : '✕';
+          uniuniEligibleIndicator.classList.toggle('is-eligible', !!data.eligible);
+          uniuniEligibleIndicator.classList.toggle('is-ineligible', !data.eligible);
+        } catch (e) {
+          uniuniEligibleIndicator.textContent = '✕';
+          uniuniEligibleIndicator.classList.remove('is-eligible');
+          uniuniEligibleIndicator.classList.add('is-ineligible');
         }
       }, 300);
     });

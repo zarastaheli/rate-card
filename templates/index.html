@@ -35,7 +35,7 @@
             <!-- Step 1: Upload -->
             <div class="step-content" id="step1">
                 <h1>Upload Raw Invoice</h1>
-                <p class="subtitle">Upload your carrier invoice CSV file to begin</p>
+                <p class="subtitle">Upload your carrier invoice CSV or XLSX file to begin</p>
 
                 <div class="inline-badge">
                     <span class="inline-label">Detected structure:</span>
@@ -45,8 +45,8 @@
                 <div class="upload-area" id="uploadArea">
                     <div class="upload-icon">↑</div>
                     <p>Click to upload or drag and drop</p>
-                    <p class="upload-hint">CSV files only (max 50MB)</p>
-                    <input type="file" id="fileInput" accept=".csv" style="display: none;">
+                    <p class="upload-hint">CSV or XLSX files only (max 50MB)</p>
+                    <input type="file" id="fileInput" accept=".csv,.xlsx" style="display: none;">
                 </div>
                 
                 <div class="file-uploaded" id="fileUploaded" style="display: none;">
