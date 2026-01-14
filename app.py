@@ -731,6 +731,9 @@ def _summary_cache_path(job_dir):
 def _selection_cache_key(selected_dashboard):
     return '|'.join(sorted(selected_dashboard))
 
+def _summary_job_key(job_dir, source_mtime, selection_key):
+    return f"{job_dir.name}:{source_mtime}:{selection_key}"
+
 def _read_summary_cache(job_dir, source_mtime, selection_key):
     cache_path = _summary_cache_path(job_dir)
     if not cache_path.exists():
@@ -787,9 +790,11 @@ def _write_breakdown_cache(job_dir, source_mtime, per_carrier, complete=True):
     with open(cache_path, 'w') as f:
         json.dump(payload, f)
 
-def _build_breakdown_cache(job_dir, source_mtime, job_key):
+def _build_breakdown_cache(job_dir, source_mtime, job_key, selected_dashboard=None, selection_key=None):
     try:
         selections = {carrier: [carrier] for carrier in DASHBOARD_CARRIERS}
+        if selected_dashboard and selection_key:
+            selections['__overall__'] = list(selected_dashboard)
         profile_dir = _get_lo_profile(job_dir, suffix='breakdown')
         try:
             metrics_map = _calculate_metrics_batch(job_dir, selections, profile_dir)
@@ -797,6 +802,10 @@ def _build_breakdown_cache(job_dir, source_mtime, job_key):
             metrics_map = _calculate_metrics_batch(job_dir, selections, profile_dir=None)
         except Exception:
             metrics_map = {}
+
+        if selected_dashboard and selection_key:
+            overall_metrics = metrics_map.get('__overall__', {})
+            _write_summary_cache(job_dir, source_mtime, selection_key, overall_metrics)
 
         per_carrier = []
         for carrier in DASHBOARD_CARRIERS:
@@ -821,7 +830,7 @@ def _build_summary_cache(job_dir, source_mtime, selection_key, selected_dashboar
         with summary_jobs_lock:
             summary_jobs.pop(job_key, None)
 
-def _start_breakdown_cache(job_dir, source_mtime):
+def _start_breakdown_cache(job_dir, source_mtime, selected_dashboard=None, selection_key=None):
     cached, complete = _read_breakdown_cache(job_dir, source_mtime)
     if cached is not None:
         return cached, not complete
@@ -830,7 +839,7 @@ def _start_breakdown_cache(job_dir, source_mtime):
         if job_key not in dashboard_jobs:
             thread = threading.Thread(
                 target=_build_breakdown_cache,
-                args=(job_dir, source_mtime, job_key),
+                args=(job_dir, source_mtime, job_key, selected_dashboard, selection_key),
                 daemon=True
             )
             dashboard_jobs[job_key] = thread
@@ -849,7 +858,7 @@ def _start_summary_cache(job_dir, source_mtime, selected_dashboard):
             for entry in breakdown_cached:
                 if entry.get('carrier') == carrier:
                     return entry.get('metrics', {}), False
-    job_key = f"{job_dir.name}:{source_mtime}:{selection_key}"
+    job_key = _summary_job_key(job_dir, source_mtime, selection_key)
     with summary_jobs_lock:
         if job_key not in summary_jobs:
             thread = threading.Thread(
@@ -1646,14 +1655,25 @@ def merchant_pricing(job_id):
         raw_df = pd.read_csv(job_dir / 'raw_invoice.csv')
         available_services = available_merchant_services(raw_df, mapping_config)
 
+        excluded = saved.get('excluded_carriers', [])
         included_services = saved.get('included_services', [])
         if not has_saved and not included_services:
             included_services = default_included_services(available_services)
 
+        eligibility = compute_eligibility(
+            mapping_config.get('origin_zip'),
+            mapping_config.get('annual_orders'),
+            mapping_config=mapping_config
+        )
+        if not eligibility['amazon_eligible_final'] and 'Amazon' not in excluded:
+            excluded.append('Amazon')
+        if not eligibility['uniuni_eligible_final'] and 'UniUni' not in excluded:
+            excluded.append('UniUni')
+
         return jsonify({
             'carriers': MERCHANT_CARRIERS,
             'service_levels': available_services,
-            'excluded_carriers': saved.get('excluded_carriers', []),
+            'excluded_carriers': excluded,
             'included_services': included_services
         })
     except Exception as e:
@@ -1662,76 +1682,73 @@ def merchant_pricing(job_id):
 @app.route('/api/redo-carriers/<job_id>', methods=['GET', 'POST'])
 def redo_carriers(job_id):
     """Get or save redo carrier selections"""
-    job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
-    if not job_dir.exists():
-        return jsonify({'error': 'Job not found'}), 404
+    try:
+        job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+        if not job_dir.exists():
+            return jsonify({'error': 'Job not found'}), 404
+
+        mapping_file = job_dir / 'mapping.json'
+        if not mapping_file.exists():
+            return jsonify({'error': 'Mapping not found'}), 404
+
+        with open(mapping_file, 'r') as f:
+            mapping_config = json.load(f)
+
+        eligibility = compute_eligibility(
+            mapping_config.get('origin_zip'),
+            mapping_config.get('annual_orders'),
+            mapping_config=mapping_config
+        )
 
         if request.method == 'POST':
             data = request.json or {}
             selected = data.get('selected_carriers', [])
             selected = [c for c in selected if c in REDO_CARRIERS]
-            mapping_file = job_dir / 'mapping.json'
-            if mapping_file.exists():
-                with open(mapping_file, 'r') as f:
-                    mapping_config = json.load(f)
-            eligibility = compute_eligibility(
-                mapping_config.get('origin_zip'),
-                mapping_config.get('annual_orders'),
-                mapping_config=mapping_config
-            )
-            if eligibility['amazon_eligible_final']:
-                if 'Amazon' not in selected:
-                    selected.append('Amazon')
-            if eligibility['uniuni_eligible_final']:
-                if 'UniUni' not in selected:
-                    selected.append('UniUni')
+            if not eligibility['amazon_eligible_final']:
+                selected = [c for c in selected if c != 'Amazon']
+            if not eligibility['uniuni_eligible_final']:
+                selected = [c for c in selected if c != 'UniUni']
 
-        with open(job_dir / 'redo_carriers.json', 'w') as f:
-            json.dump({'selected_carriers': selected}, f)
-        return jsonify({'success': True})
+            with open(job_dir / 'redo_carriers.json', 'w') as f:
+                json.dump({'selected_carriers': selected}, f)
+            return jsonify({'success': True})
 
-    mapping_file = job_dir / 'mapping.json'
-    if not mapping_file.exists():
-        return jsonify({'error': 'Mapping not found'}), 404
-
-    with open(mapping_file, 'r') as f:
-        mapping_config = json.load(f)
-
-    available = list(REDO_CARRIERS)
-    selected = list(REDO_FORCED_ON)
-    mapping_file = job_dir / 'mapping.json'
-    if mapping_file.exists():
-        with open(mapping_file, 'r') as f:
-            mapping_config = json.load(f)
-    eligibility = compute_eligibility(
-        mapping_config.get('origin_zip'),
-        mapping_config.get('annual_orders'),
-        mapping_config=mapping_config
-    )
-    if eligibility['amazon_eligible_final']:
-        if 'Amazon' not in selected:
-            selected.append('Amazon')
-    if eligibility['uniuni_eligible_final']:
-        if 'UniUni' not in selected:
-            selected.append('UniUni')
-    redo_file = job_dir / 'redo_carriers.json'
-    if redo_file.exists():
-        with open(redo_file, 'r') as f:
-            saved = json.load(f)
-            selected = saved.get('selected_carriers', list(REDO_FORCED_ON))
-        for forced in REDO_FORCED_ON:
-            if forced not in selected:
-                selected.append(forced)
+        available = list(REDO_CARRIERS)
+        selected = list(REDO_FORCED_ON)
         if eligibility['amazon_eligible_final'] and 'Amazon' not in selected:
             selected.append('Amazon')
         if eligibility['uniuni_eligible_final'] and 'UniUni' not in selected:
             selected.append('UniUni')
 
-    return jsonify({
-        'detected_carriers': available,
-        'selected_carriers': selected,
-        'default_selected': list(REDO_FORCED_ON)
-    })
+        redo_file = job_dir / 'redo_carriers.json'
+        if redo_file.exists():
+            with open(redo_file, 'r') as f:
+                saved = json.load(f)
+                selected = saved.get('selected_carriers', list(REDO_FORCED_ON))
+            for forced in REDO_FORCED_ON:
+                if forced not in selected:
+                    selected.append(forced)
+            if eligibility['amazon_eligible_final'] and 'Amazon' not in selected:
+                selected.append('Amazon')
+            if eligibility['uniuni_eligible_final'] and 'UniUni' not in selected:
+                selected.append('UniUni')
+
+        if not eligibility['amazon_eligible_final']:
+            selected = [c for c in selected if c != 'Amazon']
+        if not eligibility['uniuni_eligible_final']:
+            selected = [c for c in selected if c != 'UniUni']
+        if not eligibility['amazon_eligible_final']:
+            available = [c for c in available if c != 'Amazon']
+        if not eligibility['uniuni_eligible_final']:
+            available = [c for c in available if c != 'UniUni']
+
+        return jsonify({
+            'detected_carriers': available,
+            'selected_carriers': selected,
+            'default_selected': list(REDO_FORCED_ON)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/generate', methods=['POST'])
 def generate():
@@ -2228,10 +2245,29 @@ def dashboard_data(job_id):
         job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
         if not job_dir.exists():
             return jsonify({'error': 'Job not found'}), 404
+        mapping_file = job_dir / 'mapping.json'
+        mapping_config = {}
+        if mapping_file.exists():
+            with open(mapping_file, 'r') as f:
+                mapping_config = json.load(f)
         rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
         if not rate_card_files:
             return jsonify({'error': 'Rate card not found'}), 404
         source_mtime = int(rate_card_files[0].stat().st_mtime)
+
+        eligibility = None
+        if mapping_config:
+            eligibility = compute_eligibility(
+                mapping_config.get('origin_zip'),
+                mapping_config.get('annual_orders'),
+                mapping_config=mapping_config
+            )
+
+        available_carriers = list(DASHBOARD_CARRIERS)
+        if eligibility and not eligibility['amazon_eligible_final']:
+            available_carriers = [c for c in available_carriers if c != 'Amazon']
+        if eligibility and not eligibility['uniuni_eligible_final']:
+            available_carriers = [c for c in available_carriers if c != 'UniUni']
 
         redo_selected = []
         redo_file = job_dir / 'redo_carriers.json'
@@ -2241,65 +2277,55 @@ def dashboard_data(job_id):
                 redo_selected = redo_config.get('selected_carriers', [])
         else:
             redo_selected = list(REDO_FORCED_ON)
-            mapping_file = job_dir / 'mapping.json'
-            if mapping_file.exists():
-                with open(mapping_file, 'r') as f:
-                    mapping_config = json.load(f)
-            eligibility = compute_eligibility(
-                mapping_config.get('origin_zip'),
-                mapping_config.get('annual_orders'),
-                mapping_config=mapping_config
-            )
-            if eligibility['amazon_eligible_final']:
+            if eligibility and eligibility['amazon_eligible_final']:
                 redo_selected.append('Amazon')
-            if eligibility['uniuni_eligible_final']:
+            if eligibility and eligibility['uniuni_eligible_final']:
                 redo_selected.append('UniUni')
 
         selected_set = _dashboard_selected_from_redo(redo_selected)
-        selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in selected_set]
+        selected_dashboard = [c for c in available_carriers if c in selected_set]
         if request.method == 'POST':
             data = request.json or {}
             incoming = data.get('selected_carriers', [])
             if isinstance(incoming, list) and incoming:
-                selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in incoming]
-
-        overall_metrics, summary_pending = _start_summary_cache(job_dir, source_mtime, selected_dashboard)
-        if overall_metrics is None and not summary_pending:
-            overall_metrics = {}
+                selected_dashboard = [c for c in available_carriers if c in incoming]
 
         per_carrier = []
         include_per_carrier = request.args.get('per_carrier') == '1'
         if request.method == 'GET' and include_per_carrier:
-            cached, pending = _start_breakdown_cache(job_dir, source_mtime)
-            if summary_pending:
-                per_carrier = cached or []
-                per_carrier_count = len(per_carrier)
-                return jsonify({
-                    'selected_carriers': selected_dashboard,
-                    'available_carriers': DASHBOARD_CARRIERS,
-                    'overall': overall_metrics,
-                    'per_carrier': per_carrier,
-                    'pending': pending,
-                    'summary_pending': True,
-                    'per_carrier_count': per_carrier_count,
-                    'per_carrier_total': len(DASHBOARD_CARRIERS)
-                })
+            selection_key = _selection_cache_key(selected_dashboard)
+            overall_metrics = _read_summary_cache(job_dir, source_mtime, selection_key) or {}
+            summary_pending = not bool(overall_metrics)
+            summary_job_key = _summary_job_key(job_dir, source_mtime, selection_key)
+            with summary_jobs_lock:
+                summary_running = summary_job_key in summary_jobs
+
+            cached, pending = _start_breakdown_cache(
+                job_dir,
+                source_mtime,
+                selected_dashboard if summary_pending and not summary_running else None,
+                selection_key if summary_pending and not summary_running else None
+            )
             per_carrier = cached or []
             per_carrier_count = len(per_carrier)
             return jsonify({
                 'selected_carriers': selected_dashboard,
-                'available_carriers': DASHBOARD_CARRIERS,
+                'available_carriers': available_carriers,
                 'overall': overall_metrics,
                 'per_carrier': per_carrier,
                 'pending': pending,
                 'summary_pending': summary_pending,
                 'per_carrier_count': per_carrier_count,
-                'per_carrier_total': len(DASHBOARD_CARRIERS)
+                'per_carrier_total': len(available_carriers)
             })
+
+        overall_metrics, summary_pending = _start_summary_cache(job_dir, source_mtime, selected_dashboard)
+        if overall_metrics is None and not summary_pending:
+            overall_metrics = {}
 
         return jsonify({
             'selected_carriers': selected_dashboard,
-            'available_carriers': DASHBOARD_CARRIERS,
+            'available_carriers': available_carriers,
             'overall': overall_metrics,
             'per_carrier': per_carrier,
             'pending': False,
