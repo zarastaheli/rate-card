@@ -85,7 +85,7 @@ STANDARD_FIELDS = {
         'Order Number',
         'Order Date',
         'Zip',
-        'Weight (oz)',
+        'Weight',
         'Shipping Carrier',
         'Shipping Service',
         'Package Height',
@@ -95,6 +95,14 @@ STANDARD_FIELDS = {
     ],
     'optional': ['Label Cost']
 }
+
+def required_fields_for_structure(structure):
+    required = ['Shipping Carrier', 'Shipping Service']
+    if structure == 'zip':
+        required.append('Zip')
+    elif structure == 'zone':
+        required.append('Zone')
+    return required
 
 # Service level normalization
 SERVICE_LEVELS = [
@@ -738,9 +746,9 @@ def _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config):
     carrier_allowed = ~carrier_norm.isin(normalized_excluded)
     qualified = service_norm.isin(normalized_selected) & carrier_allowed
 
-    weight_oz = normalized_df.get('Weight (oz)')
+    weight_oz = normalized_df.get('WEIGHT_IN_OZ')
     if weight_oz is None:
-        weight_oz = normalized_df.get('WEIGHT_IN_OZ')
+        weight_oz = normalized_df.get('Weight')
     if weight_oz is None:
         weight_oz = pd.Series([np.nan] * len(normalized_df))
     weight_lbs = normalized_df.get('WEIGHT_IN_LBS')
@@ -1412,6 +1420,44 @@ def detect_structure(csv_path):
         has_zone = any(any(kw in h for h in headers) for kw in zone_keywords)
         return 'zone' if has_zone else 'zip'
 
+def _detect_weight_unit_from_text(text):
+    if not text:
+        return None
+    cleaned = re.sub(r'[^a-z0-9\s]', ' ', str(text).lower())
+    patterns = {
+        'oz': re.compile(r'\b(oz|ounce|ounces)\b'),
+        'lb': re.compile(r'\b(lb|lbs|pound|pounds)\b'),
+        'kg': re.compile(r'\b(kg|kilogram|kilograms)\b')
+    }
+    for unit, pattern in patterns.items():
+        if pattern.search(cleaned):
+            return unit
+    return None
+
+def detect_weight_unit_from_values(series, sample_size=50):
+    if series is None:
+        return None
+    sample = series.dropna().astype(str).head(sample_size)
+    counts = {'oz': 0, 'lb': 0, 'kg': 0}
+    for value in sample:
+        unit = _detect_weight_unit_from_text(value)
+        if unit:
+            counts[unit] += 1
+    if not any(counts.values()):
+        return None
+    return max(counts, key=counts.get)
+
+def detect_weight_unit_fallback(df):
+    unit_columns = [
+        col for col in df.columns
+        if 'unit' in col.lower() or 'uom' in col.lower()
+    ]
+    for col in unit_columns:
+        unit = detect_weight_unit_from_values(df[col])
+        if unit:
+            return unit
+    return None
+
 def suggest_mapping(invoice_columns, standard_field):
     """Suggest best matching column for a standard field"""
     invoice_lower = [c.lower() for c in invoice_columns]
@@ -1433,7 +1479,7 @@ def suggest_mapping(invoice_columns, standard_field):
         'Order Number': ['order', 'number', 'order_number'],
         'Order Date': ['date', 'shipped', 'order_date'],
         'Zip': ['zip', 'postal', 'postal_code'],
-        'Weight (oz)': ['weight', 'oz', 'ounces'],
+        'Weight': ['weight', 'oz', 'ounces', 'lb', 'lbs', 'pound', 'pounds', 'kg', 'kilogram', 'kilograms'],
         'Shipping Carrier': ['carrier'],
         'Shipping Service': ['service', 'shipping_service', 'shippingservice'],
         'Package Height': ['height'],
@@ -1508,7 +1554,9 @@ def mapping_page():
     if not raw_csv_path.exists():
         return render_template('screen1.html'), 404
     
+    structure = detect_structure(raw_csv_path)
     df = pd.read_csv(raw_csv_path, nrows=1)
+    df_sample = pd.read_csv(raw_csv_path, nrows=200)
     columns = list(df.columns)
     
     # Load existing mapping if available
@@ -1521,16 +1569,28 @@ def mapping_page():
     
     # Suggest mappings
     suggestions = {}
-    for field in STANDARD_FIELDS['required'] + STANDARD_FIELDS['optional']:
+    all_fields = STANDARD_FIELDS['required'] + STANDARD_FIELDS['optional']
+    required_fields = required_fields_for_structure(structure)
+    optional_fields = [f for f in all_fields if f not in required_fields]
+    for field in all_fields:
         suggested = suggest_mapping(columns, field)
         if suggested:
             suggestions[field] = suggested
     
+    weight_unit_by_column = {}
+    for col in columns:
+        unit = _detect_weight_unit_from_text(col)
+        if unit:
+            weight_unit_by_column[col] = unit
+    weight_unit_fallback = detect_weight_unit_fallback(df_sample)
+
     return render_template('screen2.html', 
                          job_id=job_id,
                          columns=columns,
                          suggestions=suggestions,
-                         standard_fields=STANDARD_FIELDS)
+                         standard_fields={'required': required_fields, 'optional': optional_fields},
+                         weight_unit_by_column=weight_unit_by_column,
+                         weight_unit_fallback=weight_unit_fallback)
 
 @app.route('/service-levels')
 def service_levels_page():
@@ -1764,9 +1824,17 @@ def mapping():
         job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
         if not job_dir.exists():
             return jsonify({'error': 'Job not found'}), 404
+
+        weight_column = mapping_config.get('Weight')
+        weight_unit = (mapping_config.get('Weight Unit') or '').lower()
+        if weight_column and not weight_unit:
+            return jsonify({'error': 'Weight unit required when Weight is mapped'}), 400
+        if weight_unit and weight_unit not in {'oz', 'lb', 'kg'}:
+            return jsonify({'error': 'Invalid weight unit'}), 400
         
         # Validate required mappings
-        required_fields = STANDARD_FIELDS['required']
+        structure = data.get('structure', 'zone')
+        required_fields = required_fields_for_structure(structure)
         missing = [f for f in required_fields if f not in mapping_config or not mapping_config[f]]
         
         if missing:
@@ -1874,11 +1942,24 @@ def mapping():
         priority = priority.mask((priority.eq("")) & non_empty, 'OTHER')
         normalized_df['SHIPPING_PRIORITY'] = priority
 
-        if 'Weight (oz)' in normalized_df.columns:
-            weight_oz = pd.to_numeric(normalized_df['Weight (oz)'], errors='coerce')
-            normalized_df['WEIGHT_IN_LBS'] = (weight_oz / 16).round(4)
+        weight_series = None
+        if 'Weight' in normalized_df.columns:
+            weight_series = pd.to_numeric(normalized_df['Weight'], errors='coerce')
+        else:
+            weight_series = pd.Series([None] * len(normalized_df))
+
+        if weight_unit == 'oz':
+            normalized_df['WEIGHT_IN_OZ'] = weight_series.round(4)
+            normalized_df['WEIGHT_IN_LBS'] = (weight_series / 16).round(4)
+        elif weight_unit == 'lb':
+            normalized_df['WEIGHT_IN_LBS'] = weight_series.round(4)
+            normalized_df['WEIGHT_IN_OZ'] = (weight_series * 16).round(4)
+        elif weight_unit == 'kg':
+            normalized_df['WEIGHT_IN_LBS'] = (weight_series * 2.2046226218).round(4)
+            normalized_df['WEIGHT_IN_OZ'] = (weight_series * 35.27396195).round(4)
         else:
             normalized_df['WEIGHT_IN_LBS'] = pd.Series([None] * len(normalized_df))
+            normalized_df['WEIGHT_IN_OZ'] = pd.Series([None] * len(normalized_df))
 
         def _numeric_series(series_name):
             if series_name in normalized_df.columns:
@@ -2325,7 +2406,7 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         'Order Number': 'ORDER_NUMBER',
         'Order Date': 'DATE',
         'Zip': 'DESTINATION_ZIP_CODE',
-        'Weight (oz)': 'WEIGHT_IN_OZ',
+        'Weight': 'WEIGHT_IN_OZ',
         'WEIGHT_IN_LBS': 'WEIGHT_IN_LBS',
         'Shipping Carrier': 'SHIPPING_CARRIER',
         'CLEANED_SHIPPING_SERVICE': 'CLEANED_SHIPPING_SERVICE',

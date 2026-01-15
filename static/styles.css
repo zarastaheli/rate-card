@@ -522,6 +522,15 @@ h1,
   gap: 10px;
 }
 
+.weight-input-group .dropdown {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.weight-input-group .dropdown-unit {
+  flex: 0 0 120px;
+}
+
 .reset-link {
   border: none;
   background: none;

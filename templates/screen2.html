@@ -105,6 +105,8 @@
     const jobId = '{{ job_id }}';
     const columns = {{ columns | tojson }};
     const suggestions = {{ suggestions | tojson }};
+    const weightUnitByColumn = {{ weight_unit_by_column | default({}) | tojson }};
+    const weightUnitFallback = {{ weight_unit_fallback | default('') | tojson }};
     const standardFields = {
       required: {{ standard_fields.required | tojson }},
       optional: {{ standard_fields.optional | tojson }}
@@ -118,6 +120,7 @@
     const labelCostModal = document.getElementById('label-cost-modal');
 
     const mappingState = {};
+    const weightUnitField = 'Weight Unit';
     let labelCostRow = null;
     let attemptedSubmit = false;
 
@@ -140,6 +143,11 @@
           labelCostRow = row;
         }
       });
+    }
+
+    function inferWeightUnit(column) {
+      if (!column) return '';
+      return weightUnitByColumn[column] || weightUnitFallback || '';
     }
 
     function createMappingRow(field, required) {
@@ -202,6 +210,26 @@
         select.appendChild(option);
       });
 
+      let unitSelect = null;
+      if (field === 'Weight') {
+        inputGroup.classList.add('weight-input-group');
+        unitSelect = document.createElement('select');
+        unitSelect.className = 'dropdown dropdown-unit';
+        unitSelect.dataset.field = weightUnitField;
+
+        const unitPlaceholder = document.createElement('option');
+        unitPlaceholder.value = '';
+        unitPlaceholder.textContent = 'Select unit';
+        unitSelect.appendChild(unitPlaceholder);
+
+        ['oz', 'lb', 'kg'].forEach((unit) => {
+          const option = document.createElement('option');
+          option.value = unit;
+          option.textContent = unit;
+          unitSelect.appendChild(option);
+        });
+      }
+
       if (isSuggested) {
         const resetBtn = document.createElement('button');
         resetBtn.className = 'reset-link';
@@ -209,12 +237,19 @@
         resetBtn.textContent = 'Reset';
         resetBtn.addEventListener('click', () => {
           select.value = '';
+          if (unitSelect) {
+            unitSelect.value = '';
+            mappingState[weightUnitField] = '';
+          }
           updateRowState(tr, field, '');
         });
         inputGroup.appendChild(resetBtn);
       }
 
       inputGroup.insertBefore(select, inputGroup.firstChild);
+      if (unitSelect) {
+        inputGroup.insertBefore(unitSelect, inputGroup.firstChild.nextSibling);
+      }
       tdInput.appendChild(inputGroup);
       tr.appendChild(tdInput);
 
@@ -232,16 +267,37 @@
 
       // Event listeners
       select.addEventListener('change', () => {
+        if (unitSelect) {
+          const inferredUnit = inferWeightUnit(select.value);
+          if (inferredUnit) {
+            unitSelect.value = inferredUnit;
+            mappingState[weightUnitField] = inferredUnit;
+          }
+        }
         updateRowState(tr, field, select.value);
         if (attemptedSubmit) {
           validateMapping();
         }
       });
+      if (unitSelect) {
+        unitSelect.addEventListener('change', () => {
+          mappingState[weightUnitField] = unitSelect.value;
+          updateRowState(tr, field, select.value);
+          if (attemptedSubmit) {
+            validateMapping();
+          }
+        });
+      }
 
       // Initialize state
       const initialValue = suggested || '';
       select.value = initialValue;
       mappingState[field] = initialValue;
+      if (unitSelect) {
+        const inferredUnit = inferWeightUnit(initialValue);
+        unitSelect.value = inferredUnit;
+        mappingState[weightUnitField] = inferredUnit;
+      }
       updateRowState(tr, field, initialValue);
 
       return tr;
@@ -254,6 +310,18 @@
       const badge = row.querySelector('.badge');
       badge.className = 'badge';
       badge.textContent = '';
+
+      if (field === 'Weight') {
+        const unitValue = mappingState[weightUnitField] || '';
+        if (value && !unitValue) {
+          if (attemptedSubmit) {
+            row.classList.add('is-error');
+            badge.className += ' badge-required';
+            badge.textContent = 'Required';
+          }
+          return;
+        }
+      }
 
       if (value) {
         row.classList.add('is-confirmed');
@@ -273,6 +341,10 @@
 
     function validateMapping() {
       const missing = standardFields.required.filter(f => !mappingState[f] || mappingState[f] === '');
+      const weightUnitMissing = mappingState['Weight'] && !mappingState[weightUnitField];
+      if (weightUnitMissing) {
+        missing.push(weightUnitField);
+      }
       globalError.style.display = attemptedSubmit && missing.length > 0 ? 'block' : 'none';
       labelCostWarning.style.display = 'none';
 
