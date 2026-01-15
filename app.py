@@ -277,9 +277,13 @@ def default_included_services(services):
     included = []
     for service in services:
         normalized = normalize_service_name(service)
+        normalized_compact = normalized.replace(' ', '')
         if any(token in normalized for token in international_tokens):
             continue
-        if any(token in normalized for token in exclude_tokens):
+        is_two_day = any(token in normalized for token in exclude_tokens) or any(
+            token in normalized_compact for token in ('2DAY', '2NDDAY', 'SECONDDAY')
+        )
+        if is_two_day:
             if 'DHL' in normalized and 'EXPEDITED' in normalized:
                 included.append(service)
                 continue
@@ -784,6 +788,8 @@ def _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config):
     spread_won = 0.0
     winable_count = 0.0
     won_count = 0.0
+    usps_won_count = 0.0
+    ups_won_count = 0.0
 
     c19 = float(controls['c19'] or 0)
     c20 = float(controls['c20'] or 0)
@@ -847,6 +853,10 @@ def _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config):
             savings_won += savings * count_val
             spread_won += spread * count_val
             won_count += count_val
+            if winning_carrier == 'USPS Market':
+                usps_won_count += count_val
+            if winning_carrier in {'UPS Ground', 'UPS Ground Saver'}:
+                ups_won_count += count_val
         if base_savings >= 0:
             winable_count += count_val
 
@@ -866,6 +876,20 @@ def _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config):
     else:
         est_savings = savings_won / scale_factor if scale_factor else savings_won
         est_redo_deal = spread_won / scale_factor if scale_factor else spread_won
+
+    annual_orders_value = annual_orders or orders_in_analysis
+    usps_won_pct = usps_won_count / total_count if total_count else 0
+    ups_won_pct = ups_won_count / total_count if total_count else 0
+    avg_qualified_label_cost = (
+        float(qualified_df['label_cost'].mean())
+        if not qualified_df.empty and qualified_df['label_cost'].notna().any()
+        else 0.0
+    )
+    selected_set = set(selected_dashboard or [])
+    if selected_set and selected_set.issubset({'USPS Market'}):
+        est_redo_deal = 0.20 * annual_orders_value * usps_won_pct
+    elif selected_set and selected_set.issubset({'UPS Ground', 'UPS Ground Saver'}):
+        est_redo_deal = avg_qualified_label_cost * 0.11 * annual_orders_value * ups_won_pct
 
     spread_available = est_savings + est_redo_deal
     orders_winable = winable_count / total_count if total_count else 0
