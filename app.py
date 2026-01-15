@@ -447,6 +447,29 @@ def detect_redo_carriers(raw_df, mapping_config):
     ordered = [c for c in REDO_CARRIERS if c in detected]
     return ordered
 
+def available_merchant_carriers(raw_df, mapping_config):
+    carrier_col = mapping_config.get('mapping', {}).get('Shipping Carrier')
+    detected = set()
+    for _, row in raw_df.iterrows():
+        carrier_val = row.get(carrier_col) if carrier_col in raw_df.columns else None
+        normalized = normalize_merchant_carrier(carrier_val)
+        if normalized:
+            detected.add(normalized)
+    display_map = {
+        'USPS': 'USPS',
+        'UPS': 'UPS',
+        'FEDEX': 'FedEx',
+        'AMAZON': 'Amazon',
+        'DHL': 'DHL',
+        'UNIUNI': 'UniUni'
+    }
+    ordered = []
+    for carrier in MERCHANT_CARRIERS:
+        key = normalize_merchant_carrier(carrier)
+        if key in detected:
+            ordered.append(display_map.get(key, carrier))
+    return ordered
+
 def available_merchant_services(raw_df, mapping_config):
     services = extract_invoice_services(raw_df, mapping_config)
     if not services:
@@ -2019,6 +2042,7 @@ def merchant_pricing(job_id):
 
         raw_df = pd.read_csv(job_dir / 'raw_invoice.csv')
         available_services = available_merchant_services(raw_df, mapping_config)
+        available_carriers = available_merchant_carriers(raw_df, mapping_config)
 
         excluded = saved.get('excluded_carriers', [])
         included_services = saved.get('included_services', [])
@@ -2035,8 +2059,11 @@ def merchant_pricing(job_id):
         if not eligibility['uniuni_eligible_final'] and 'UniUni' not in excluded:
             excluded.append('UniUni')
 
+        if available_carriers:
+            excluded = [c for c in excluded if c in available_carriers]
+
         return jsonify({
-            'carriers': MERCHANT_CARRIERS,
+            'carriers': available_carriers,
             'service_levels': available_services,
             'excluded_carriers': excluded,
             'included_services': included_services

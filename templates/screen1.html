@@ -169,11 +169,11 @@
     uploadArea.addEventListener('dragleave', () => {
       uploadArea.style.borderColor = '#d0d4dd';
     });
-    uploadArea.addEventListener('drop', (e) => {
-      e.preventDefault();
-      uploadArea.style.borderColor = '#d0d4dd';
-      const files = e.dataTransfer.files;
-      if (files.length > 0) {
+      uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.style.borderColor = '#d0d4dd';
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
         fileInput.files = files;
         handleFileSelect();
       }
@@ -280,7 +280,7 @@
     replaceFileBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       fileInput.value = '';
-      uploadDefault.style.display = 'flex';
+      uploadDefault.style.display = 'block';
       uploadSelected.style.display = 'none';
       merchantInfoSection.style.display = 'none';
       detectedStructureRow.style.display = 'none';
@@ -415,6 +415,14 @@
     });
 
     cancelBtn.addEventListener('click', () => {
+      localStorage.removeItem('job_id');
+      localStorage.removeItem('detected_structure');
+      localStorage.removeItem('merchant_name_suggestion');
+      localStorage.removeItem('merchant_name');
+      localStorage.removeItem('merchant_id');
+      localStorage.removeItem('origin_zip');
+      localStorage.removeItem('annual_orders');
+      localStorage.removeItem('uploaded_file_name');
       window.location.href = '/';
     });
 
