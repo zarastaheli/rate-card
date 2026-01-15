@@ -1458,6 +1458,17 @@ def detect_weight_unit_fallback(df):
             return unit
     return None
 
+def _annual_orders_missing(mapping_config):
+    if not mapping_config:
+        return True
+    raw_value = mapping_config.get('annual_orders')
+    if raw_value is None or str(raw_value).strip() == '':
+        return True
+    try:
+        return float(raw_value) <= 0
+    except Exception:
+        return True
+
 def suggest_mapping(invoice_columns, standard_field):
     """Suggest best matching column for a standard field"""
     invoice_lower = [c.lower() for c in invoice_columns]
@@ -2723,6 +2734,7 @@ def dashboard_data(job_id):
         if mapping_file.exists():
             with open(mapping_file, 'r') as f:
                 mapping_config = json.load(f)
+        annual_orders_missing = _annual_orders_missing(mapping_config)
         rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
         if not rate_card_files:
             return jsonify({'error': 'Rate card not found'}), 404
@@ -2787,6 +2799,15 @@ def dashboard_data(job_id):
                     if entry.get('carrier') in available_carriers
                 ]
             per_carrier_count = len(per_carrier)
+            if annual_orders_missing:
+                overall_metrics = {**overall_metrics}
+                for key in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available'):
+                    overall_metrics.pop(key, None)
+                for entry in per_carrier:
+                    metrics = entry.get('metrics') or {}
+                    for key in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available'):
+                        metrics.pop(key, None)
+                    entry['metrics'] = metrics
             return jsonify({
                 'selected_carriers': selected_dashboard,
                 'available_carriers': available_carriers,
@@ -2795,12 +2816,17 @@ def dashboard_data(job_id):
                 'pending': pending,
                 'summary_pending': summary_pending,
                 'per_carrier_count': per_carrier_count,
+                'annual_orders_missing': annual_orders_missing,
                 'per_carrier_total': len(available_carriers)
             })
 
         overall_metrics, summary_pending = _start_summary_cache(job_dir, source_mtime, selected_dashboard)
         if overall_metrics is None and not summary_pending:
             overall_metrics = {}
+        if annual_orders_missing:
+            overall_metrics = {**(overall_metrics or {})}
+            for key in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available'):
+                overall_metrics.pop(key, None)
 
         return jsonify({
             'selected_carriers': selected_dashboard,
@@ -2811,7 +2837,8 @@ def dashboard_data(job_id):
                 if entry.get('carrier') in available_carriers
             ],
             'pending': False,
-            'summary_pending': summary_pending
+            'summary_pending': summary_pending,
+            'annual_orders_missing': annual_orders_missing
         })
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 500
@@ -2830,6 +2857,50 @@ def download_rate_card(job_id):
         return jsonify({'error': 'Rate card not found'}), 404
     
     return send_file(rate_card_files[0], as_attachment=True)
+
+@app.route('/api/annual-orders/<job_id>', methods=['POST'])
+def update_annual_orders(job_id):
+    """Update annual orders and regenerate rate card."""
+    try:
+        job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+        if not job_dir.exists():
+            return jsonify({'error': 'Job not found'}), 404
+        mapping_file = job_dir / 'mapping.json'
+        if not mapping_file.exists():
+            return jsonify({'error': 'Mapping not found'}), 404
+        data = request.json or {}
+        annual_orders = data.get('annual_orders')
+        try:
+            annual_orders_value = int(float(annual_orders))
+        except Exception:
+            return jsonify({'error': 'Invalid annual orders'}), 400
+        if annual_orders_value <= 0:
+            return jsonify({'error': 'Annual orders must be greater than 0'}), 400
+
+        with open(mapping_file, 'r') as f:
+            mapping_config = json.load(f)
+        mapping_config['annual_orders'] = annual_orders_value
+        with open(mapping_file, 'w') as f:
+            json.dump(mapping_config, f)
+
+        merchant_pricing = {'excluded_carriers': [], 'included_services': []}
+        pricing_file = job_dir / 'merchant_pricing.json'
+        if pricing_file.exists():
+            with open(pricing_file, 'r') as f:
+                merchant_pricing = json.load(f)
+
+        generate_rate_card(job_dir, mapping_config, merchant_pricing)
+
+        summary_cache = _summary_cache_path(job_dir)
+        breakdown_cache = _cache_path_for_job(job_dir)
+        if summary_cache.exists():
+            summary_cache.unlink()
+        if breakdown_cache.exists():
+            breakdown_cache.unlink()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<job_id>/raw-invoice')
 def download_raw_invoice(job_id):

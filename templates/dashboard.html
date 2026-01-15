@@ -63,6 +63,27 @@
         <div class="carrier-chips" id="selected-carriers"></div>
       </div>
 
+      <div class="dashboard-banner is-hidden" id="annual-orders-banner">
+        <span>Add annual orders to see spread</span>
+        <button class="button button-secondary button-compact" type="button" id="annual-orders-btn">Add annual orders</button>
+      </div>
+
+      <div class="modal-overlay is-hidden" id="annual-orders-modal">
+        <div class="modal-card">
+          <div class="modal-title">Add annual orders</div>
+          <p class="modal-subtitle">Enter the annual order count to calculate savings and spread</p>
+          <input type="number" class="text-input modal-input" id="annual-orders-input" placeholder="Annual orders" min="1" />
+          <div class="modal-actions">
+            <button class="button button-secondary" type="button" id="annual-orders-cancel">Cancel</button>
+            <button class="button button-primary" type="button" id="annual-orders-save">Save</button>
+          </div>
+          <div class="modal-loading is-hidden" id="annual-orders-loading">
+            <span class="dashboard-loading-spinner"></span>
+            <span>Calculating…</span>
+          </div>
+        </div>
+      </div>
+
       <div class="summary-grid" id="summary-grid">
         <div class="metric-card">
           <div class="metric-main">
@@ -136,6 +157,13 @@
     const sharepointBtn = document.getElementById('sharepoint-btn');
     const backToRedoBtn = document.getElementById('back-to-redo-btn');
     const startOverBtn = document.getElementById('start-over-btn');
+    const annualOrdersBanner = document.getElementById('annual-orders-banner');
+    const annualOrdersBtn = document.getElementById('annual-orders-btn');
+    const annualOrdersModal = document.getElementById('annual-orders-modal');
+    const annualOrdersInput = document.getElementById('annual-orders-input');
+    const annualOrdersCancel = document.getElementById('annual-orders-cancel');
+    const annualOrdersSave = document.getElementById('annual-orders-save');
+    const annualOrdersLoading = document.getElementById('annual-orders-loading');
 
     downloadBtn.addEventListener('click', () => {
       window.location.href = `/download/${jobId}/rate-card`;
@@ -165,7 +193,15 @@
       '% Orders Won W/ Spread': 'metric-orders-won-spread'
     };
 
+    const suppressedMetrics = new Set([
+      'Est. Merchant Annual Savings',
+      'Est. Redo Deal Size',
+      'Spread Available'
+    ]);
+    let annualOrdersMissing = false;
+
     function formatMetric(label, value) {
+      if (annualOrdersMissing && suppressedMetrics.has(label)) return '--';
       if (value === null || value === undefined || value === '') return '--';
       if (typeof value === 'string') return value;
       if (label.includes('%')) {
@@ -232,6 +268,9 @@
         const rowEl = document.createElement('div');
         rowEl.className = 'breakdown-row';
         const formatWithHighlight = (key) => {
+          if (annualOrdersMissing && suppressedMetrics.has(key)) {
+            return '--';
+          }
           const raw = metrics[key];
           const formatted = formatMetric(key, raw);
           const numeric = parseMetricValue(raw);
@@ -301,6 +340,8 @@
         setTimeout(() => loadDashboard(selected, initial, recalculating), 700);
         return;
       }
+      annualOrdersMissing = !!data.annual_orders_missing;
+      annualOrdersBanner.classList.toggle('is-hidden', !annualOrdersMissing);
       currentSelection = data.selected_carriers || [];
       renderSummary(data.overall || {});
       renderSelectedCarriers(data.available_carriers || [], currentSelection);
@@ -322,6 +363,8 @@
         loadingEl.textContent = 'Unable to load carrier breakdown.';
         return;
       }
+      annualOrdersMissing = !!data.annual_orders_missing;
+      annualOrdersBanner.classList.toggle('is-hidden', !annualOrdersMissing);
       if (data.per_carrier_total) {
         loadingEl.textContent = `Calculating carrier breakdown ${data.per_carrier_count || 0}/${data.per_carrier_total}...`;
       }
@@ -357,6 +400,58 @@
     });
 
     loadDashboard(null, true).then(loadPerCarrier);
+
+    function openAnnualOrdersModal() {
+      annualOrdersModal.classList.remove('is-hidden');
+      annualOrdersInput.value = '';
+      annualOrdersInput.focus();
+    }
+
+    function closeAnnualOrdersModal() {
+      if (!annualOrdersLoading.classList.contains('is-hidden')) return;
+      annualOrdersModal.classList.add('is-hidden');
+    }
+
+    async function saveAnnualOrders() {
+      const cleaned = String(annualOrdersInput.value || '').replace(/[, ]/g, '');
+      if (!cleaned || isNaN(cleaned)) {
+        alert('Please enter a valid number');
+        return;
+      }
+      const value = Math.floor(Number(cleaned));
+      if (value <= 0) {
+        alert('Annual orders must be greater than 0');
+        return;
+      }
+      annualOrdersLoading.classList.remove('is-hidden');
+      annualOrdersSave.disabled = true;
+      annualOrdersCancel.disabled = true;
+      const response = await fetch(`/api/annual-orders/${jobId}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ annual_orders: value })
+      });
+      const data = await response.json();
+      annualOrdersLoading.classList.add('is-hidden');
+      annualOrdersSave.disabled = false;
+      annualOrdersCancel.disabled = false;
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      localStorage.setItem('annual_orders', String(value));
+      closeAnnualOrdersModal();
+      loadDashboard(currentSelection, false, true).then(loadPerCarrier);
+    }
+
+    annualOrdersBtn.addEventListener('click', openAnnualOrdersModal);
+    annualOrdersCancel.addEventListener('click', closeAnnualOrdersModal);
+    annualOrdersSave.addEventListener('click', saveAnnualOrders);
+    annualOrdersModal.addEventListener('click', (event) => {
+      if (event.target === annualOrdersModal) {
+        closeAnnualOrdersModal();
+      }
+    });
   </script>
 </body>
 </html>
