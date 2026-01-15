@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin log</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="page-container entry-page">
+    <div class="card entry-card">
+      <div class="card-content">
+        <div class="card-body">
+          <div class="entry-title entry-title--bold">Admin</div>
+          <p class="subtitle">All input data captured from the flow</p>
+
+          <div class="admin-tabs">
+            <button class="admin-tab is-active" type="button" data-tab="deal-tab">Deal sizing</button>
+            <button class="admin-tab" type="button" data-tab="rate-tab">Rate card + deal sizing</button>
+          </div>
+
+          <div class="admin-table-wrapper" id="deal-tab">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  {% for header in (deal_data.headers if deal_data is defined else []) %}
+                  <th>{{ header }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% if deal_data is defined and deal_data.rows %}
+                  {% for row in deal_data.rows %}
+                  <tr>
+                    {% for cell in row %}
+                    <td>{{ cell }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr>
+                    <td colspan="{{ (deal_data.headers | length) if deal_data is defined else 1 }}">No entries yet.</td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="admin-table-wrapper is-hidden" id="rate-tab">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  {% for header in (rate_data.headers if rate_data is defined else []) %}
+                  <th>{{ header }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% if rate_data is defined and rate_data.rows %}
+                  {% for row in rate_data.rows %}
+                  <tr>
+                    {% for cell in row %}
+                    <td>{{ cell }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr>
+                    <td colspan="{{ (rate_data.headers | length) if rate_data is defined else 1 }}">No entries yet.</td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+          <div class="button-row">
+            <button class="button button-secondary" type="button" id="back-home">Back</button>
+            <a class="button button-secondary" href="/admin/download">Download spreadsheet</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('back-home').addEventListener('click', () => {
+      window.location.href = '/';
+    });
+    document.querySelectorAll('.admin-tab').forEach((button) => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.remove('is-active'));
+        document.querySelectorAll('.admin-table-wrapper').forEach(panel => panel.classList.add('is-hidden'));
+        button.classList.add('is-active');
+        const target = document.getElementById(button.dataset.tab);
+        if (target) target.classList.remove('is-hidden');
+      });
+    });
+  </script>
+</body>
+</html>

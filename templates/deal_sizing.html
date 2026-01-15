@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deal sizing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="page-container entry-page">
+    <div class="card entry-card">
+      <div class="card-content">
+        <div class="card-body">
+          <div class="entry-title">Deal Sizing</div>
+          <p class="subtitle">This flow is coming soon. We’ll plug it in here when it’s ready.</p>
+          <div class="button-row">
+            <button class="button button-secondary" type="button" id="back-home">Back</button>
+            <button class="button button-primary" type="button" id="go-rate-card">Go to rate card flow</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('back-home').addEventListener('click', () => {
+      window.location.href = '/';
+    });
+    document.getElementById('go-rate-card').addEventListener('click', () => {
+      localStorage.setItem('flow_type', 'rate_card_plus_deal_sizing');
+      window.location.href = '/upload';
+    });
+  </script>
+</body>
+</html>

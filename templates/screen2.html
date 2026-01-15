@@ -393,6 +393,7 @@
       const originZip = localStorage.getItem('origin_zip') || '';
       const annualOrders = localStorage.getItem('annual_orders') || '';
       const structure = localStorage.getItem('detected_structure') || 'zone';
+      const flowType = localStorage.getItem('flow_type') || 'rate_card_plus_deal_sizing';
 
       fetch('/api/mapping', {
         method: 'POST',
@@ -405,6 +406,7 @@
           origin_zip: originZip,
           annual_orders: annualOrders,
           structure: structure,
+          flow_type: flowType,
           mapping: mappingState
         })
       })
@@ -425,7 +427,7 @@
     }
 
     backBtn.addEventListener('click', () => {
-      window.location.href = `/`;
+      window.location.href = `/upload`;
     });
 
     // Initialize

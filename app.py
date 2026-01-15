@@ -1560,10 +1560,109 @@ def clean_old_runs():
             except Exception:
                 pass
 
+ADMIN_LOG_PATH = BASE_DIR / 'admin_log.xlsx'
+
+def _ensure_admin_log():
+    if ADMIN_LOG_PATH.exists():
+        return
+    wb = openpyxl.Workbook()
+    default_sheet = wb.active
+    wb.remove(default_sheet)
+    for title in ('Deal sizing', 'Rate card + deal sizing'):
+        ws = wb.create_sheet(title)
+        ws.append([
+            'Timestamp',
+            'Job ID',
+            'Flow Type',
+            'Merchant Name',
+            'Merchant ID',
+            'Existing Customer',
+            'Origin ZIP',
+            'Annual Orders',
+            'Structure',
+            'Zone Column',
+            'Mapping JSON',
+            'Merchant Pricing JSON',
+            'Redo Carriers JSON',
+            'USPS Market % Off',
+            'USPS Market $ Off'
+        ])
+    wb.save(ADMIN_LOG_PATH)
+
+def _upsert_admin_row(ws, job_id, row_values):
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        if str(row[1].value) == str(job_id):
+            for idx, value in enumerate(row_values, start=1):
+                row[idx - 1].value = value
+            return
+    ws.append(row_values)
+
+def log_admin_entry(job_id, mapping_config, merchant_pricing, redo_config):
+    _ensure_admin_log()
+    flow_type = mapping_config.get('flow_type', 'rate_card_plus_deal_sizing') if mapping_config else ''
+    sheet_name = 'Deal sizing' if flow_type == 'deal_sizing' else 'Rate card + deal sizing'
+    pct_off, dollar_off = _usps_market_discount_values(mapping_config)
+    row = [
+        datetime.utcnow().isoformat(),
+        job_id,
+        flow_type,
+        mapping_config.get('merchant_name', '') if mapping_config else '',
+        mapping_config.get('merchant_id', '') if mapping_config else '',
+        bool(mapping_config.get('existing_customer')) if mapping_config else False,
+        mapping_config.get('origin_zip', '') if mapping_config else '',
+        mapping_config.get('annual_orders', '') if mapping_config else '',
+        mapping_config.get('structure', '') if mapping_config else '',
+        mapping_config.get('zone_column', '') if mapping_config else '',
+        json.dumps(mapping_config.get('mapping', {})) if mapping_config else '{}',
+        json.dumps(merchant_pricing or {}),
+        json.dumps(redo_config or {}),
+        pct_off,
+        dollar_off
+    ]
+    wb = openpyxl.load_workbook(ADMIN_LOG_PATH)
+    ws = wb[sheet_name]
+    _upsert_admin_row(ws, job_id, row)
+    wb.save(ADMIN_LOG_PATH)
+
 @app.route('/')
 def index():
     clean_old_runs()
+    return render_template('entry.html')
+
+@app.route('/upload')
+def upload_page():
+    clean_old_runs()
     return render_template('screen1.html')
+
+@app.route('/deal-sizing')
+def deal_sizing_page():
+    return render_template('deal_sizing.html')
+
+@app.route('/admin')
+def admin_page():
+    _ensure_admin_log()
+    wb = openpyxl.load_workbook(ADMIN_LOG_PATH, data_only=True)
+    deal_ws = wb['Deal sizing'] if 'Deal sizing' in wb.sheetnames else None
+    rate_ws = wb['Rate card + deal sizing'] if 'Rate card + deal sizing' in wb.sheetnames else None
+
+    def _sheet_data(ws):
+        if ws is None:
+            return {'headers': [], 'rows': []}
+        headers = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+        rows = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            rows.append(list(row))
+        return {'headers': headers, 'rows': rows}
+
+    deal_data = _sheet_data(deal_ws)
+    rate_data = _sheet_data(rate_ws)
+    wb.close()
+    return render_template('admin.html', deal_data=deal_data, rate_data=rate_data)
+
+@app.route('/admin/download')
+def admin_download():
+    _ensure_admin_log()
+    return send_file(ADMIN_LOG_PATH, as_attachment=True)
 
 @app.route('/mapping')
 def mapping_page():
@@ -1890,6 +1989,7 @@ def mapping():
             'existing_customer': existing_customer,
             'origin_zip': origin_zip,
             'annual_orders': annual_orders,
+            'flow_type': data.get('flow_type', 'rate_card_plus_deal_sizing'),
             'mapping': mapping_config,
             'structure': structure,
             'zone_column': zone_col_name
@@ -2680,7 +2780,11 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         raise Exception(f"Failed to save Excel file: {str(e)}")
     finally:
         wb.close()
-    
+    try:
+        log_admin_entry(job_dir.name, mapping_config, merchant_pricing, redo_config)
+    except Exception:
+        pass
+
     return output_path
 
 @app.route('/api/status/<job_id>')
