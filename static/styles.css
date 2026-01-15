@@ -816,6 +816,23 @@ h1,
   gap: 12px;
 }
 
+#dashboard-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-bottom-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  width: 100%;
+}
+
+.dashboard-footnote {
+  margin-bottom: 8px;
+}
+
 #breakdown-section {
   margin-top: 40px;
 }

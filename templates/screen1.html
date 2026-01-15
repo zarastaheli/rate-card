@@ -98,6 +98,10 @@
           <input type="checkbox" id="existing-customer" />
           <label class="field-label-inline" for="existing-customer">Existing customer</label>
         </div>
+        <div class="form-field" id="annual-orders-field" style="display: none; margin-top: 16px;">
+          <label class="field-label" for="annual-orders">Annual orders</label>
+          <input type="number" class="text-input" id="annual-orders" placeholder="Enter annual orders" min="0" />
+        </div>
         <div class="form-field" id="origin-zip-field" style="display: none; margin-top: 16px;">
           <label class="field-label" for="origin-zip">Origin ZIP <span class="required-asterisk">*</span></label>
           <input type="text" class="text-input" id="origin-zip" placeholder="Enter origin ZIP code" />
@@ -113,10 +117,6 @@
             <span class="eligibility-indicator" id="uniuni-eligible-indicator">✕</span>
             <span class="field-label" id="uniuni-eligible-text">UniUni Eligible</span>
           </div>
-        </div>
-        <div class="form-field" id="annual-orders-field" style="display: none; margin-top: 16px;">
-          <label class="field-label" for="annual-orders">Annual orders</label>
-          <input type="number" class="text-input" id="annual-orders" placeholder="Enter annual orders" min="0" />
         </div>
         </div>
 
@@ -181,6 +181,19 @@
 
     fileInput.addEventListener('change', handleFileSelect);
 
+    function setStructurePill(structure) {
+      if (structure === 'zone') {
+        structurePill.textContent = 'Zone-based';
+        structurePill.className = 'csv-structure-pill csv-structure-pill--zone';
+      } else if (structure === 'zip') {
+        structurePill.textContent = 'Zip-based';
+        structurePill.className = 'csv-structure-pill csv-structure-pill--zip';
+      } else {
+        structurePill.textContent = 'Unknown';
+        structurePill.className = 'csv-structure-pill csv-structure-pill--unknown';
+      }
+    }
+
     function handleFileSelect() {
       const file = fileInput.files[0];
       if (!file) return;
@@ -241,22 +254,14 @@
         localStorage.setItem('job_id', jobId);
         localStorage.setItem('detected_structure', detectedStructure);
         localStorage.setItem('merchant_name_suggestion', data.merchant_name_suggestion || '');
+        localStorage.setItem('uploaded_file_name', file.name);
 
         if (data.merchant_name_suggestion) {
           merchantNameInput.value = data.merchant_name_suggestion;
         }
         amazonEligibilityField.style.display = 'none';
         uniuniEligibilityField.style.display = 'none';
-        if (detectedStructure === 'zone') {
-          structurePill.textContent = 'Zone-based';
-          structurePill.className = 'csv-structure-pill csv-structure-pill--zone';
-        } else if (detectedStructure === 'zip') {
-          structurePill.textContent = 'Zip-based';
-          structurePill.className = 'csv-structure-pill csv-structure-pill--zip';
-        } else {
-          structurePill.textContent = 'Unknown';
-          structurePill.className = 'csv-structure-pill csv-structure-pill--unknown';
-        }
+        setStructurePill(detectedStructure);
 
         updateContinueButton();
       })
@@ -299,6 +304,7 @@
       localStorage.removeItem('merchant_id');
       localStorage.removeItem('origin_zip');
       localStorage.removeItem('annual_orders');
+      localStorage.removeItem('uploaded_file_name');
       jobId = null;
       updateContinueButton();
     });
@@ -411,6 +417,44 @@
     cancelBtn.addEventListener('click', () => {
       window.location.href = '/';
     });
+
+    function restoreFromStorage() {
+      const storedJobId = localStorage.getItem('job_id');
+      if (!storedJobId) return;
+      jobId = storedJobId;
+      detectedStructure = localStorage.getItem('detected_structure');
+      const storedMerchantName = localStorage.getItem('merchant_name');
+      const storedMerchantId = localStorage.getItem('merchant_id');
+      const storedOriginZip = localStorage.getItem('origin_zip');
+      const storedAnnualOrders = localStorage.getItem('annual_orders');
+      const storedFileName = localStorage.getItem('uploaded_file_name');
+
+      uploadedFileName.textContent = storedFileName || 'Invoice uploaded';
+      uploadDefault.style.display = 'none';
+      uploadSelected.style.display = 'flex';
+      merchantInfoSection.style.display = 'block';
+      detectedStructureRow.style.display = 'flex';
+      originZipField.style.display = 'block';
+      annualOrdersField.style.display = 'block';
+
+      if (detectedStructure) {
+        setStructurePill(detectedStructure);
+      }
+
+      merchantNameInput.value = storedMerchantName || localStorage.getItem('merchant_name_suggestion') || '';
+      merchantIdInput.value = storedMerchantId || '';
+      existingCustomerCheckbox.checked = !!storedMerchantId;
+      merchantIdField.style.display = existingCustomerCheckbox.checked ? 'block' : 'none';
+      originZipInput.value = storedOriginZip || '';
+      annualOrdersInput.value = storedAnnualOrders || '';
+
+      updateContinueButton();
+      if (originZipInput.value.trim()) {
+        originZipInput.dispatchEvent(new Event('input'));
+      }
+    }
+
+    restoreFromStorage();
   </script>
 </body>
 </html>

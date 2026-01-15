@@ -118,6 +118,10 @@
       </div>
 
       <div class="dashboard-footnote dashboard-footnote--alert">All Figures Are Estimates - Final Deal Size Will Be Determined By Deal Desk</div>
+      <div class="dashboard-bottom-actions">
+        <button class="button button-secondary" type="button" id="back-to-redo-btn">Back</button>
+        <button class="button button-secondary" type="button" id="start-over-btn">Start over</button>
+      </div>
       </div>
 
       </div>
@@ -130,12 +134,27 @@
     const merchantName = '{{ merchant_name }}';
     const downloadBtn = document.getElementById('download-btn');
     const sharepointBtn = document.getElementById('sharepoint-btn');
+    const backToRedoBtn = document.getElementById('back-to-redo-btn');
+    const startOverBtn = document.getElementById('start-over-btn');
 
     downloadBtn.addEventListener('click', () => {
       window.location.href = `/download/${jobId}/rate-card`;
     });
     sharepointBtn.addEventListener('click', () => {
       window.open(`https://sharepoint.example.com?merchant=${encodeURIComponent(merchantName)}`, '_blank');
+    });
+    backToRedoBtn.addEventListener('click', () => {
+      window.location.href = `/redo-carriers?job_id=${jobId}`;
+    });
+    startOverBtn.addEventListener('click', () => {
+      localStorage.removeItem('job_id');
+      localStorage.removeItem('detected_structure');
+      localStorage.removeItem('merchant_name_suggestion');
+      localStorage.removeItem('merchant_name');
+      localStorage.removeItem('merchant_id');
+      localStorage.removeItem('origin_zip');
+      localStorage.removeItem('annual_orders');
+      window.location.href = '/';
     });
 
     const metricMap = {
