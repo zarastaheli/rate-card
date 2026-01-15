@@ -138,6 +138,23 @@
         </div>
       </div>
 
+      <div class="usps-discount-row is-hidden" id="usps-discount-row">
+        <div class="usps-discount-card">
+          <label class="usps-discount-label" for="usps-percent-off">% Off USPS Market Rate</label>
+          <div class="usps-discount-input">
+            <input type="number" class="text-input" id="usps-percent-off" min="0" step="0.1" />
+            <span class="usps-discount-suffix">%</span>
+          </div>
+        </div>
+        <div class="usps-discount-card">
+          <label class="usps-discount-label" for="usps-dollar-off">$ Off USPS Market Rate</label>
+          <div class="usps-discount-input">
+            <span class="usps-discount-prefix">$</span>
+            <input type="number" class="text-input" id="usps-dollar-off" min="0" step="0.01" />
+          </div>
+        </div>
+      </div>
+
       <div class="dashboard-footnote dashboard-footnote--alert">All Figures Are Estimates - Final Deal Size Will Be Determined By Deal Desk</div>
       <div class="dashboard-bottom-actions">
         <button class="button button-secondary" type="button" id="back-to-redo-btn">Back</button>
@@ -164,6 +181,9 @@
     const annualOrdersCancel = document.getElementById('annual-orders-cancel');
     const annualOrdersSave = document.getElementById('annual-orders-save');
     const annualOrdersLoading = document.getElementById('annual-orders-loading');
+    const uspsDiscountRow = document.getElementById('usps-discount-row');
+    const uspsPercentOffInput = document.getElementById('usps-percent-off');
+    const uspsDollarOffInput = document.getElementById('usps-dollar-off');
 
     downloadBtn.addEventListener('click', () => {
       window.location.href = `/download/${jobId}/rate-card`;
@@ -199,6 +219,7 @@
       'Spread Available'
     ]);
     let annualOrdersMissing = false;
+    let discountUpdateTimer = null;
 
     function formatMetric(label, value) {
       if (annualOrdersMissing && suppressedMetrics.has(label)) return '--';
@@ -233,11 +254,16 @@
     function renderSelectedCarriers(available, selected) {
       const container = document.getElementById('selected-carriers');
       container.innerHTML = '';
-      available.forEach((carrier) => {
+      const selectedSet = new Set(selected);
+      const ordered = [
+        ...available.filter(carrier => selectedSet.has(carrier)),
+        ...available.filter(carrier => !selectedSet.has(carrier))
+      ];
+      ordered.forEach((carrier) => {
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = 'carrier-chip';
-        if (selected.includes(carrier)) {
+        if (selectedSet.has(carrier)) {
           chip.classList.add('is-selected');
         }
         chip.textContent = carrier;
@@ -342,6 +368,15 @@
       }
       annualOrdersMissing = !!data.annual_orders_missing;
       annualOrdersBanner.classList.toggle('is-hidden', !annualOrdersMissing);
+      const showDiscounts = !data.summary_pending && !!data.show_usps_market_discount;
+      uspsDiscountRow.classList.toggle('is-hidden', !showDiscounts);
+      if (data.show_usps_market_discount) {
+        const pct = Number(data.usps_market_pct_off) * 100;
+        uspsPercentOffInput.value = Number.isFinite(pct) ? pct.toFixed(1).replace(/\.0$/, '') : '5';
+        uspsDollarOffInput.value = Number.isFinite(Number(data.usps_market_dollar_off))
+          ? Number(data.usps_market_dollar_off).toFixed(2).replace(/\.00$/, '')
+          : '0';
+      }
       currentSelection = data.selected_carriers || [];
       renderSummary(data.overall || {});
       renderSelectedCarriers(data.available_carriers || [], currentSelection);
@@ -365,6 +400,8 @@
       }
       annualOrdersMissing = !!data.annual_orders_missing;
       annualOrdersBanner.classList.toggle('is-hidden', !annualOrdersMissing);
+      const showDiscounts = !data.pending && !!data.show_usps_market_discount;
+      uspsDiscountRow.classList.toggle('is-hidden', !showDiscounts);
       if (data.per_carrier_total) {
         loadingEl.textContent = `Calculating carrier breakdown ${data.per_carrier_count || 0}/${data.per_carrier_total}...`;
       }
@@ -452,6 +489,34 @@
         closeAnnualOrdersModal();
       }
     });
+
+    function queueDiscountUpdate() {
+      if (discountUpdateTimer) clearTimeout(discountUpdateTimer);
+      discountUpdateTimer = setTimeout(async () => {
+        const pct = parseFloat(uspsPercentOffInput.value || '0');
+        const dollar = parseFloat(uspsDollarOffInput.value || '0');
+        if (isNaN(pct) || isNaN(dollar)) return;
+        setLoading(true, 'Recalculating...', false);
+        const response = await fetch(`/api/usps-market-discount/${jobId}`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            pct_off: pct / 100,
+            dollar_off: dollar
+          })
+        });
+        const data = await response.json();
+        if (data.error) {
+          alert(data.error);
+          setLoading(false, '', false);
+          return;
+        }
+        loadDashboard(currentSelection, false, true).then(loadPerCarrier);
+      }, 450);
+    }
+
+    uspsPercentOffInput.addEventListener('input', queueDiscountUpdate);
+    uspsDollarOffInput.addEventListener('input', queueDiscountUpdate);
   </script>
 </body>
 </html>

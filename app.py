@@ -1469,6 +1469,22 @@ def _annual_orders_missing(mapping_config):
     except Exception:
         return True
 
+def _usps_market_discount_values(mapping_config):
+    pct = None
+    dollar = None
+    if mapping_config:
+        pct = mapping_config.get('usps_market_pct_off')
+        dollar = mapping_config.get('usps_market_dollar_off')
+    try:
+        pct = float(pct) if pct is not None else 0.05
+    except Exception:
+        pct = 0.05
+    try:
+        dollar = float(dollar) if dollar is not None else 0.0
+    except Exception:
+        dollar = 0.0
+    return pct, dollar
+
 def suggest_mapping(invoice_columns, standard_field):
     """Suggest best matching column for a standard field"""
     invoice_lower = [c.lower() for c in invoice_columns]
@@ -2618,6 +2634,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         except Exception:
             annual_orders_value = None
         summary_ws['C9'] = annual_orders_value if annual_orders_value is not None else 13968
+        pct_off, dollar_off = _usps_market_discount_values(mapping_config)
+        summary_ws['C19'] = pct_off
+        summary_ws['C20'] = dollar_off
         update_pricing_summary_redo_carriers(summary_ws, selected_redo)
         update_pricing_summary_merchant_carriers(summary_ws, excluded_carriers)
         update_pricing_summary_merchant_service_levels(
@@ -2735,6 +2754,7 @@ def dashboard_data(job_id):
             with open(mapping_file, 'r') as f:
                 mapping_config = json.load(f)
         annual_orders_missing = _annual_orders_missing(mapping_config)
+        pct_off, dollar_off = _usps_market_discount_values(mapping_config)
         rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
         if not rate_card_files:
             return jsonify({'error': 'Rate card not found'}), 404
@@ -2769,6 +2789,10 @@ def dashboard_data(job_id):
 
         selected_set = _dashboard_selected_from_redo(redo_selected)
         selected_dashboard = [c for c in available_carriers if c in selected_set]
+        show_usps_market_discount = bool(
+            (eligibility and eligibility['amazon_eligible_final'] and 'Amazon' in redo_selected)
+            or (eligibility and eligibility['uniuni_eligible_final'] and 'UniUni' in redo_selected)
+        )
         if request.method == 'POST':
             data = request.json or {}
             incoming = data.get('selected_carriers', [])
@@ -2817,6 +2841,9 @@ def dashboard_data(job_id):
                 'summary_pending': summary_pending,
                 'per_carrier_count': per_carrier_count,
                 'annual_orders_missing': annual_orders_missing,
+                'show_usps_market_discount': show_usps_market_discount,
+                'usps_market_pct_off': pct_off,
+                'usps_market_dollar_off': dollar_off,
                 'per_carrier_total': len(available_carriers)
             })
 
@@ -2838,7 +2865,10 @@ def dashboard_data(job_id):
             ],
             'pending': False,
             'summary_pending': summary_pending,
-            'annual_orders_missing': annual_orders_missing
+            'annual_orders_missing': annual_orders_missing,
+            'show_usps_market_discount': show_usps_market_discount,
+            'usps_market_pct_off': pct_off,
+            'usps_market_dollar_off': dollar_off
         })
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 500
@@ -2880,6 +2910,53 @@ def update_annual_orders(job_id):
         with open(mapping_file, 'r') as f:
             mapping_config = json.load(f)
         mapping_config['annual_orders'] = annual_orders_value
+        with open(mapping_file, 'w') as f:
+            json.dump(mapping_config, f)
+
+        merchant_pricing = {'excluded_carriers': [], 'included_services': []}
+        pricing_file = job_dir / 'merchant_pricing.json'
+        if pricing_file.exists():
+            with open(pricing_file, 'r') as f:
+                merchant_pricing = json.load(f)
+
+        generate_rate_card(job_dir, mapping_config, merchant_pricing)
+
+        summary_cache = _summary_cache_path(job_dir)
+        breakdown_cache = _cache_path_for_job(job_dir)
+        if summary_cache.exists():
+            summary_cache.unlink()
+        if breakdown_cache.exists():
+            breakdown_cache.unlink()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/usps-market-discount/<job_id>', methods=['POST'])
+def update_usps_market_discount(job_id):
+    """Update USPS Market discount settings and regenerate rate card."""
+    try:
+        job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+        if not job_dir.exists():
+            return jsonify({'error': 'Job not found'}), 404
+        mapping_file = job_dir / 'mapping.json'
+        if not mapping_file.exists():
+            return jsonify({'error': 'Mapping not found'}), 404
+        data = request.json or {}
+        pct_off = data.get('pct_off')
+        dollar_off = data.get('dollar_off')
+        try:
+            pct_off = float(pct_off)
+            dollar_off = float(dollar_off)
+        except Exception:
+            return jsonify({'error': 'Invalid discount values'}), 400
+        if pct_off < 0 or dollar_off < 0:
+            return jsonify({'error': 'Discount values must be non-negative'}), 400
+
+        with open(mapping_file, 'r') as f:
+            mapping_config = json.load(f)
+        mapping_config['usps_market_pct_off'] = pct_off
+        mapping_config['usps_market_dollar_off'] = dollar_off
         with open(mapping_file, 'w') as f:
             json.dump(mapping_config, f)
 

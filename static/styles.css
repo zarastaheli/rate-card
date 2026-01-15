@@ -921,6 +921,49 @@ h1,
   margin-bottom: 8px;
 }
 
+.usps-discount-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0 10px;
+}
+
+.usps-discount-row.is-hidden {
+  display: none;
+}
+
+.usps-discount-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: inset 0 0 0 1px #eef1f6;
+}
+
+.usps-discount-label {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 600;
+  margin-bottom: 10px;
+  display: block;
+}
+
+.usps-discount-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usps-discount-prefix,
+.usps-discount-suffix {
+  font-weight: 700;
+  color: #1f2937;
+}
+
+@media (max-width: 720px) {
+  .usps-discount-row {
+    grid-template-columns: 1fr;
+  }
+}
 #breakdown-section {
   margin-top: 40px;
 }
