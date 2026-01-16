@@ -73,13 +73,18 @@
     const rateCardBtn = document.getElementById('rate-card-btn');
     const adminBtn = document.getElementById('admin-btn');
 
+    function clearFlowStorage(flowType) {
+      localStorage.clear();
+      localStorage.setItem('flow_type', flowType);
+    }
+
     dealSizingBtn.addEventListener('click', () => {
-      localStorage.setItem('flow_type', 'deal_sizing');
+      clearFlowStorage('deal_sizing');
       window.location.href = '/deal-sizing';
     });
 
     rateCardBtn.addEventListener('click', () => {
-      localStorage.setItem('flow_type', 'rate_card_plus_deal_sizing');
+      clearFlowStorage('rate_card_plus_deal_sizing');
       window.location.href = '/upload';
     });
 

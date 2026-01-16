@@ -335,6 +335,7 @@
     const dealSizingSave = document.getElementById('deal-sizing-save');
     const dealSizingCard = document.querySelector('.metric-card--deal-sizing');
     const dealSizeStorageKey = `deal_size_value_${jobId}`;
+    const dealInputsStorageKey = `deal_inputs_${jobId}`;
     const dealCarrierSpreadLoading = document.getElementById('deal-carrier-spread-loading');
 
     downloadBtn.addEventListener('click', () => {
@@ -356,6 +357,7 @@
       localStorage.removeItem('annual_orders');
       localStorage.removeItem('flow_type');
       localStorage.removeItem(dealSizeStorageKey);
+      localStorage.removeItem(dealInputsStorageKey);
       window.location.href = '/';
     });
 
@@ -406,6 +408,50 @@
       if (!raw) return null;
       const parsed = Number(raw);
       return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function getStoredDealInputs() {
+      try {
+        const raw = localStorage.getItem(dealInputsStorageKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function saveDealInputs(inputs) {
+      localStorage.setItem(dealInputsStorageKey, JSON.stringify(inputs));
+    }
+
+    function parseNumberValue(value) {
+      if (value === null || value === undefined) return NaN;
+      if (typeof value === 'number') return value;
+      const cleaned = String(value).replace(/,/g, '').trim();
+      const parsed = Number(cleaned);
+      return parsed;
+    }
+
+    function hasUsableDealInputs(stored) {
+      if (!stored || typeof stored !== 'object') return false;
+      const annualOrders = parseNumberValue(stored.annualOrders);
+      const avgLabelCost = parseNumberValue(stored.avgLabelCost);
+      const attachRate = parseNumberValue(stored.attachRate);
+      const perLabelFee = parseNumberValue(stored.perLabelFee);
+      const feeOrderPct = parseNumberValue(stored.feeOrderPct);
+      const saasFee = parseNumberValue(stored.saasFee);
+      return (
+        (Number.isFinite(annualOrders) && annualOrders > 0) ||
+        (Number.isFinite(avgLabelCost) && avgLabelCost > 0) ||
+        (Number.isFinite(attachRate) && attachRate > 0) ||
+        (Number.isFinite(perLabelFee) && perLabelFee > 0) ||
+        (Number.isFinite(feeOrderPct) && feeOrderPct > 0) ||
+        (Number.isFinite(saasFee) && saasFee > 0) ||
+        !!stored.commentSold ||
+        !!stored.ebay ||
+        !!stored.liveSelling
+      );
     }
 
     function renderSummary(metrics) {
@@ -727,7 +773,9 @@
           setLoading(false, '', false);
           return;
         }
-        loadDashboard(currentSelection, false, true, true).then(() => loadPerCarrier(true));
+        await loadDashboard(currentSelection, false, true, true);
+        await loadPerCarrier(true);
+        await refreshDealSizeFromStoredInputs();
       }, 450);
     }
 
@@ -786,16 +834,36 @@
       return Number.isFinite(spread) ? spread : null;
     }
 
-    function computeDealSpreadTotals() {
-      const annualOrders = Number(dealAnnualOrders.value || 0);
-      const adjustedOrdersText = dealAdjustedOrders.textContent || '';
-      const adjustedOrders = Number(adjustedOrdersText.replace(/,/g, '')) || annualOrders;
-      const avgLabel = Number(dealAvgLabelCost.value || 0);
-      const selectedSet = new Set(currentSelection || []);
-      const detailMap = buildCarrierDetailMap(dealCarrierDetails);
+    function adjustedOrdersForInputs(annualOrders, commentSold, ebay, liveSelling) {
+      let adjusted = annualOrders;
+      if (commentSold) adjusted *= 0.6;
+      if (ebay) {
+        adjusted *= liveSelling ? 0.6 : 0.95;
+      }
+      return adjusted;
+    }
+
+    function computeDealSpreadTotalsFromValues({
+      annualOrders,
+      avgLabelCost,
+      commentSold,
+      ebay,
+      liveSelling,
+      selectedCarriers,
+      carrierDetails
+    }) {
+      const adjustedOrders = adjustedOrdersForInputs(
+        annualOrders,
+        commentSold,
+        ebay,
+        liveSelling
+      );
+      const avgLabel = Number(avgLabelCost || 0);
+      const selectedSet = new Set(selectedCarriers || currentSelection || []);
+      const detailMap = buildCarrierDetailMap(carrierDetails || dealCarrierDetails);
 
       if (adjustedOrders <= 0) {
-        return { totalSpread: 0, spreadPerOrder: 0 };
+        return { totalSpread: 0, spreadPerOrder: 0, adjustedOrders };
       }
 
       let totalSpread = 0;
@@ -825,7 +893,20 @@
       });
 
       const spreadPerOrder = adjustedOrders > 0 ? totalSpread / adjustedOrders : 0;
-      return { totalSpread, spreadPerOrder };
+      return { totalSpread, spreadPerOrder, adjustedOrders };
+    }
+
+    function computeDealSpreadTotals() {
+      const annualOrders = Number(dealAnnualOrders.value || 0);
+      return computeDealSpreadTotalsFromValues({
+        annualOrders,
+        avgLabelCost: Number(dealAvgLabelCost.value || 0),
+        commentSold: toggleCommentSold.checked,
+        ebay: toggleEbay.checked,
+        liveSelling: toggleLiveSelling.checked,
+        selectedCarriers: currentSelection || [],
+        carrierDetails: dealCarrierDetails
+      });
     }
 
     function updateDealSizing() {
@@ -834,16 +915,19 @@
       const ebay = toggleEbay.checked;
       const liveSelling = toggleLiveSelling.checked;
 
-      let adjusted = annualOrders;
-      if (commentSold) adjusted *= 0.6;
-      if (ebay) {
-        adjusted *= liveSelling ? 0.6 : 0.95;
-      }
-      dealAdjustedOrders.textContent = formatNumber(adjusted);
+      const spreadTotals = computeDealSpreadTotalsFromValues({
+        annualOrders,
+        avgLabelCost: Number(dealAvgLabelCost.value || 0),
+        commentSold,
+        ebay,
+        liveSelling,
+        selectedCarriers: currentSelection || [],
+        carrierDetails: dealCarrierDetails
+      });
+      dealAdjustedOrders.textContent = formatNumber(spreadTotals.adjustedOrders || 0);
       if (dealCarrierSpreadLoading) {
         dealCarrierSpreadLoading.classList.toggle('is-hidden', !dealCarrierDetailsPending);
       }
-      const spreadTotals = computeDealSpreadTotals();
       dealSpreadPerOrder = spreadTotals.spreadPerOrder || 0;
       const carrierSpreadEl = document.getElementById('deal-carrier-spread');
       if (carrierSpreadEl) {
@@ -851,8 +935,47 @@
       }
     }
 
+    async function refreshDealSizeFromStoredInputs() {
+      const stored = getStoredDealInputs();
+      if (!stored) return;
+      const response = await fetch(`/api/deal-sizing/${jobId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selected_carriers: currentSelection || [] })
+      });
+      const data = await response.json();
+      if (data.error) return;
+      if (Array.isArray(data.carrier_details)) {
+        dealCarrierDetails = data.carrier_details;
+        dealCarrierDetailsPending = !!data.carrier_details_pending;
+      }
+
+      const annualOrders = Number(stored.annualOrders || 0);
+      const perLabelFee = Number(stored.perLabelFee || 0);
+      const feeOrderPct = Number(stored.feeOrderPct || 0);
+      const saasFee = Number(stored.saasFee || 0);
+      const spreadTotals = computeDealSpreadTotalsFromValues({
+        annualOrders,
+        avgLabelCost: Number(stored.avgLabelCost || 0),
+        commentSold: !!stored.commentSold,
+        ebay: !!stored.ebay,
+        liveSelling: !!stored.liveSelling,
+        selectedCarriers: currentSelection || [],
+        carrierDetails: dealCarrierDetails
+      });
+      const labelFeeTotal = perLabelFee * (feeOrderPct * annualOrders);
+      const dealSize = spreadTotals.totalSpread + saasFee + labelFeeTotal;
+      const dealValueEl = document.getElementById('metric-redo-deal-size');
+      if (dealValueEl) {
+        dealValueEl.textContent = formatCurrency(dealSize);
+      }
+      localStorage.setItem(dealSizeStorageKey, String(Number.isFinite(dealSize) ? dealSize : 0));
+      if (dealSizingCard) {
+        dealSizingCard.classList.add('has-deal-size');
+      }
+    }
+
     async function openDealSizing() {
-      localStorage.removeItem(dealSizeStorageKey);
       dealCarrierDetails = [];
       dealCarrierDetailsPending = false;
       const response = await fetch(`/api/deal-sizing/${jobId}`, {
@@ -865,21 +988,46 @@
         alert(data.error);
         return;
       }
-      const annualOrders = Number(data.annual_orders || localStorage.getItem('annual_orders') || 0);
+      const stored = getStoredDealInputs();
+      const storedInputs = hasUsableDealInputs(stored) ? stored : null;
+      const baseAnnualOrders = parseNumberValue(
+        data.annual_orders || localStorage.getItem('annual_orders') || 0
+      );
       const winRate = Number(currentMetrics['% Orders We Could Win'] || 0) * 100;
-      const avgLabel = Number(data.avg_label_cost || 0);
-      const perLabelFee = 0.00;
-      const feeOrderPct = 100 - winRate;
-      const attachRate = 85;
-      const saasFee = saasFeeForOrders(annualOrders);
+      const avgLabel = Number.isFinite(parseNumberValue(storedInputs && storedInputs.avgLabelCost))
+        ? parseNumberValue(storedInputs && storedInputs.avgLabelCost)
+        : Number(data.avg_label_cost || 0);
+      const annualOrders = Number.isFinite(parseNumberValue(storedInputs && storedInputs.annualOrders))
+        ? parseNumberValue(storedInputs && storedInputs.annualOrders)
+        : baseAnnualOrders;
+      const perLabelFee = Number.isFinite(parseNumberValue(storedInputs && storedInputs.perLabelFee))
+        ? parseNumberValue(storedInputs && storedInputs.perLabelFee)
+        : 0.00;
+      const feeOrderPct = Number.isFinite(parseNumberValue(storedInputs && storedInputs.feeOrderPct))
+        ? parseNumberValue(storedInputs && storedInputs.feeOrderPct) * 100
+        : 100 - winRate;
+      const attachRate = Number.isFinite(parseNumberValue(storedInputs && storedInputs.attachRate))
+        ? parseNumberValue(storedInputs && storedInputs.attachRate)
+        : 85;
+      const saasFee = Number.isFinite(parseNumberValue(storedInputs && storedInputs.saasFee))
+        ? parseNumberValue(storedInputs && storedInputs.saasFee)
+        : saasFeeForOrders(annualOrders);
       dealCarrierDetails = Array.isArray(data.carrier_details) ? data.carrier_details : [];
       dealCarrierDetailsPending = !!data.carrier_details_pending;
+
+      toggleCommentSold.checked = !!(storedInputs && storedInputs.commentSold);
+      toggleEbay.checked = !!(storedInputs && storedInputs.ebay);
+      toggleLiveSelling.checked = !!(storedInputs && storedInputs.liveSelling);
 
       dealAnnualOrders.value = annualOrders ? Math.round(annualOrders) : '';
       dealAvgLabelCost.value = Number.isFinite(avgLabel) ? avgLabel.toFixed(2).replace(/\.00$/, '') : '';
       dealPerLabelFee.value = Number.isFinite(perLabelFee) ? perLabelFee.toFixed(2) : '';
-      dealFeeOrderPct.value = Number.isFinite(feeOrderPct) ? feeOrderPct.toFixed(1).replace(/\.0$/, '') : '';
-      dealAttachRate.value = attachRate.toFixed(1).replace(/\.0$/, '');
+      dealFeeOrderPct.value = Number.isFinite(feeOrderPct)
+        ? feeOrderPct.toFixed(1).replace(/\.0$/, '')
+        : '';
+      dealAttachRate.value = Number.isFinite(attachRate)
+        ? attachRate.toFixed(1).replace(/\.0$/, '')
+        : '';
       dealSaasFee.value = Number.isFinite(saasFee) ? saasFee.toFixed(0) : '';
 
       toggleLiveRow.style.display = toggleEbay.checked ? 'flex' : 'none';
@@ -925,6 +1073,17 @@
       if (dealValueEl) {
         dealValueEl.textContent = formatCurrency(dealSize);
       }
+      saveDealInputs({
+        annualOrders,
+        avgLabelCost: Number(dealAvgLabelCost.value || 0),
+        perLabelFee,
+        feeOrderPct,
+        attachRate,
+        saasFee,
+        commentSold: toggleCommentSold.checked,
+        ebay: toggleEbay.checked,
+        liveSelling: toggleLiveSelling.checked
+      });
       localStorage.setItem(dealSizeStorageKey, String(Number.isFinite(dealSize) ? dealSize : 0));
       const dealCard = document.querySelector('.metric-card--deal-sizing');
       if (dealCard) dealCard.classList.add('has-deal-size');
