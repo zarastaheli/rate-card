@@ -819,6 +819,14 @@ h1,
   margin-bottom: 20px;
 }
 
+.dashboard-header h1 {
+  margin: 0 0 6px 0;
+}
+
+.dashboard-header .subtitle {
+  margin: 0;
+}
+
 .dashboard-actions {
   display: flex;
   flex-direction: column;
@@ -921,6 +929,473 @@ h1,
   margin-bottom: 8px;
 }
 
+.metric-action {
+  align-self: flex-start;
+  margin-top: 10px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #475569;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.metric-card--deal-sizing .metric-value {
+  display: none;
+}
+
+.metric-card--deal-sizing .metric-label {
+  display: block;
+}
+
+.metric-card--deal-sizing {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr min-content;
+  justify-items: center;
+  align-items: stretch;
+  text-align: center;
+}
+
+.metric-value--deal {
+  display: block;
+}
+
+.deal-sizing-edit-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.deal-sizing-edit-btn::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid #111827;
+  border-top: 2px solid #111827;
+  transform: rotate(45deg);
+}
+
+.metric-card--deal-sizing.has-deal-size .deal-sizing-cta {
+  display: none;
+}
+
+.metric-card--deal-sizing.has-deal-size .metric-label {
+  display: block;
+}
+
+.metric-card--deal-sizing .metric-main {
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  justify-content: center;
+}
+
+.metric-card--deal-sizing .metric-action {
+  align-self: center;
+  margin-top: auto;
+  justify-self: center;
+  display: inline-flex;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.metric-card--deal-sizing.has-deal-size .metric-value {
+  display: block;
+}
+
+.metric-card--deal-sizing .metric-main {
+  width: 100%;
+  align-items: center;
+}
+.metric-card--deal-sizing .metric-label {
+  text-align: center;
+  width: 100%;
+}
+
+.metric-card--deal-sizing.has-deal-size .metric-label {
+  display: block;
+}
+
+.metric-card--deal-sizing.has-deal-size .metric-action {
+  margin-top: 12px;
+}
+
+.modal-card--wide {
+  width: min(860px, 94vw);
+}
+
+.deal-sizing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.deal-sizing-grid--compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.deal-sizing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deal-sizing-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.deal-sizing-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deal-input-filled {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  font-weight: 700;
+}
+
+.deal-input-compact {
+  max-width: 120px;
+  text-align: center;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  font-weight: 700;
+}
+
+.deal-input-attach {
+  flex: 1;
+  text-align: center;
+  min-width: 90px;
+}
+
+.deal-sizing-prefix,
+.deal-sizing-suffix {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.deal-sizing-readout {
+  padding: 10px 12px;
+  background: #ffffff;
+  border-radius: 10px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.deal-sizing-file {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.deal-sizing-helper {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.modal-actions--spread {
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+#deal-sizing-modal .modal-actions--spread .button {
+  padding: 8px 16px;
+  font-size: 13px;
+}
+#deal-attach-upload-field.is-hidden {
+  display: none;
+}
+
+.deal-sizing-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0 8px;
+}
+
+.deal-summary-card {
+  border: 1px solid #eef1f6;
+  border-radius: 16px;
+  padding: 18px;
+  text-align: center;
+  background: #ffffff;
+}
+
+.deal-summary-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  margin-bottom: 12px;
+  min-height: 16px;
+}
+
+.deal-summary-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.deal-summary-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: center;
+  width: 100%;
+  min-height: 32px;
+}
+
+.deal-summary-input .deal-input-attach {
+  flex: 0 0 72px;
+  width: 72px;
+  max-width: 72px;
+  font-size: 28px;
+  font-weight: 700;
+  font-family: inherit;
+  color: #0f172a;
+  padding: 0;
+  border-radius: 10px;
+  border-color: transparent;
+  background: transparent;
+  line-height: 1.1;
+  box-shadow: none;
+  text-align: center;
+  appearance: textfield;
+}
+
+.deal-summary-input .deal-input-attach::-webkit-outer-spin-button,
+.deal-summary-input .deal-input-attach::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.deal-summary-input .deal-input-attach:focus {
+  border-color: #cbd5f5;
+  background: #ffffff;
+  padding: 4px 8px;
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
+}
+
+.deal-summary-input .deal-sizing-suffix {
+  font-size: 22px;
+  font-weight: 700;
+  margin-left: 0;
+}
+
+.deal-sizing-upload-block {
+  margin-top: 18px;
+}
+
+.deal-sizing-upload-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.deal-sizing-carriers {
+  margin: 10px 0 6px;
+}
+
+.deal-sizing-carriers-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.carrier-chips--compact {
+  margin-top: 0;
+  margin-bottom: 0;
+  gap: 8px;
+}
+
+.carrier-chip--with-percent {
+  padding: 8px 12px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.carrier-chip-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.carrier-chip-percent {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.carrier-chip.is-selected .carrier-chip-percent {
+  color: #0f7a40;
+}
+
+
+.deal-sizing-upload-drop {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.deal-sizing-upload-drop:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.deal-sizing-upload-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.deal-sizing-upload-text strong {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.deal-sizing-toggles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0 10px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.toggle-row--flat {
+  background: #f8fafc;
+  border: 1px solid #eef1f6;
+}
+
+.toggle-row--stack {
+  align-items: stretch;
+}
+
+.toggle-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.toggle-stack-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.toggle-stack-row--nested {
+  padding-left: 0;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 46px;
+  height: 26px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: #d1d5db;
+  transition: 0.2s;
+  border-radius: 999px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.2s;
+  border-radius: 50%;
+}
+
+.switch input:checked + .slider {
+  background-color: #111827;
+}
+
+.switch input:checked + .slider:before {
+  transform: translateX(20px);
+}
+
+@media (max-width: 720px) {
+  .deal-sizing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .deal-sizing-toggles {
+    grid-template-columns: 1fr;
+  }
+
+  .deal-sizing-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .deal-sizing-grid--compact {
+    grid-template-columns: 1fr;
+  }
+}
 .entry-page {
   min-height: 100vh;
   align-items: center;

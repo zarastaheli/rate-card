@@ -1485,6 +1485,52 @@ def _usps_market_discount_values(mapping_config):
         dollar = 0.0
     return pct, dollar
 
+def _avg_label_cost_from_job(job_dir):
+    normalized_csv = Path(job_dir) / 'normalized.csv'
+    if not normalized_csv.exists():
+        return None
+    try:
+        df = pd.read_csv(normalized_csv)
+    except Exception:
+        return None
+    if df.empty:
+        return None
+    series = None
+    if 'Label Cost' in df.columns:
+        series = df['Label Cost']
+    elif 'LABEL_COST' in df.columns:
+        series = df['LABEL_COST']
+    if series is None:
+        return None
+    numeric = pd.to_numeric(series, errors='coerce')
+    if numeric.notna().any():
+        return float(numeric.mean())
+    return None
+
+def _carrier_distribution(job_dir, mapping_config, available_carriers):
+    normalized_csv = Path(job_dir) / 'normalized.csv'
+    if not normalized_csv.exists():
+        return {carrier: 0 for carrier in available_carriers}
+    try:
+        df = pd.read_csv(normalized_csv)
+    except Exception:
+        return {carrier: 0 for carrier in available_carriers}
+    if df.empty:
+        return {carrier: 0 for carrier in available_carriers}
+    carrier_series = df['Shipping Carrier'] if 'Shipping Carrier' in df.columns else pd.Series([""] * len(df))
+    service_series = df['Shipping Service'] if 'Shipping Service' in df.columns else pd.Series([""] * len(df))
+    carrier_series = carrier_series.fillna("").astype(str)
+    service_series = service_series.fillna("").astype(str)
+    counts = {carrier: 0 for carrier in available_carriers}
+    total = len(df)
+    for carrier_val, service_val in zip(carrier_series, service_series):
+        inferred = infer_redo_carrier(carrier_val, service_val)
+        if inferred in counts:
+            counts[inferred] += 1
+    if total <= 0:
+        return {carrier: 0 for carrier in available_carriers}
+    return {carrier: counts.get(carrier, 0) / total for carrier in available_carriers}
+
 def suggest_mapping(invoice_columns, standard_field):
     """Suggest best matching column for a standard field"""
     invoice_lower = [c.lower() for c in invoice_columns]
@@ -2897,6 +2943,7 @@ def dashboard_data(job_id):
             (eligibility and eligibility['amazon_eligible_final'] and 'Amazon' in redo_selected)
             or (eligibility and eligibility['uniuni_eligible_final'] and 'UniUni' in redo_selected)
         )
+        carrier_percentages = _carrier_distribution(job_dir, mapping_config, available_carriers)
         if request.method == 'POST':
             data = request.json or {}
             incoming = data.get('selected_carriers', [])
@@ -2948,6 +2995,7 @@ def dashboard_data(job_id):
                 'show_usps_market_discount': show_usps_market_discount,
                 'usps_market_pct_off': pct_off,
                 'usps_market_dollar_off': dollar_off,
+                'carrier_percentages': carrier_percentages,
                 'per_carrier_total': len(available_carriers)
             })
 
@@ -2972,7 +3020,8 @@ def dashboard_data(job_id):
             'annual_orders_missing': annual_orders_missing,
             'show_usps_market_discount': show_usps_market_discount,
             'usps_market_pct_off': pct_off,
-            'usps_market_dollar_off': dollar_off
+            'usps_market_dollar_off': dollar_off,
+            'carrier_percentages': carrier_percentages
         })
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 500
@@ -3080,6 +3129,27 @@ def update_usps_market_discount(job_id):
             breakdown_cache.unlink()
 
         return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deal-sizing/<job_id>')
+def deal_sizing_data(job_id):
+    """Return inputs needed for deal sizing."""
+    try:
+        job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+        if not job_dir.exists():
+            return jsonify({'error': 'Job not found'}), 404
+        mapping_file = job_dir / 'mapping.json'
+        if not mapping_file.exists():
+            return jsonify({'error': 'Mapping not found'}), 404
+        with open(mapping_file, 'r') as f:
+            mapping_config = json.load(f)
+        annual_orders = mapping_config.get('annual_orders')
+        avg_label_cost = _avg_label_cost_from_job(job_dir)
+        return jsonify({
+            'annual_orders': annual_orders,
+            'avg_label_cost': avg_label_cost
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

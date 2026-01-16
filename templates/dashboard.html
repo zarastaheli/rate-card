@@ -59,7 +59,7 @@
 
       <div id="dashboard-content" class="dashboard-content is-hidden">
       <div class="section-block selected-carriers-section">
-        <div class="section-title">Selected carriers</div>
+        <div class="section-title">Redo Carriers Sold</div>
         <div class="carrier-chips" id="selected-carriers"></div>
       </div>
 
@@ -84,6 +84,125 @@
         </div>
       </div>
 
+      <div class="modal-overlay is-hidden" id="deal-sizing-modal">
+        <div class="modal-card modal-card--wide">
+          <div class="modal-title">Deal Sizing</div>
+          <p class="modal-subtitle">Adjust inputs to refine the sizing estimate</p>
+
+          <div class="deal-sizing-carriers">
+            <div class="deal-sizing-carriers-title">Redo Carriers Sold</div>
+            <div class="carrier-chips carrier-chips--compact" id="deal-sizing-carriers"></div>
+          </div>
+
+          <div class="deal-sizing-summary">
+            <div class="deal-summary-card">
+              <div class="deal-summary-label">Carrier Spread</div>
+              <div class="deal-summary-value" id="deal-carrier-spread">$--</div>
+            </div>
+            <div class="deal-summary-card">
+              <div class="deal-summary-label">Adjusted Annual Orders</div>
+              <div class="deal-summary-value" id="deal-adjusted-orders">--</div>
+            </div>
+            <div class="deal-summary-card">
+              <div class="deal-summary-label">Attach Rate</div>
+              <div class="deal-summary-input">
+                <input type="number" class="text-input deal-input-filled deal-input-attach" id="deal-attach-rate" min="0" max="100" step="0.1" />
+                <span class="deal-sizing-suffix">%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="deal-sizing-grid deal-sizing-grid--compact">
+            <div class="deal-sizing-field">
+              <label class="deal-sizing-label" for="deal-saas-fee">SaaS Fee</label>
+              <div class="deal-sizing-input">
+                <span class="deal-sizing-prefix">$</span>
+                <input type="number" class="text-input deal-input-filled" id="deal-saas-fee" min="0" step="0.01" />
+              </div>
+            </div>
+            <div class="deal-sizing-field">
+              <label class="deal-sizing-label" for="deal-per-label-fee">Per Label Fee</label>
+              <div class="deal-sizing-input">
+                <span class="deal-sizing-prefix">$</span>
+                <input type="number" class="text-input deal-input-filled" id="deal-per-label-fee" min="0" step="0.01" />
+              </div>
+            </div>
+            <div class="deal-sizing-field">
+              <label class="deal-sizing-label" for="deal-fee-order-pct">% Of Orders With Fee</label>
+              <div class="deal-sizing-input">
+                <input type="number" class="text-input deal-input-filled" id="deal-fee-order-pct" min="0" max="100" step="0.1" />
+                <span class="deal-sizing-suffix">%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="deal-sizing-grid deal-sizing-grid--inputs">
+            <div class="deal-sizing-field">
+              <label class="deal-sizing-label" for="deal-annual-orders">Annual Orders</label>
+              <input type="number" class="text-input deal-input-filled" id="deal-annual-orders" min="0" />
+            </div>
+            <div class="deal-sizing-field">
+              <label class="deal-sizing-label" for="deal-avg-label-cost">Average Label Cost</label>
+              <div class="deal-sizing-input">
+                <span class="deal-sizing-prefix">$</span>
+                <input type="number" class="text-input deal-input-filled" id="deal-avg-label-cost" min="0" step="0.01" />
+              </div>
+            </div>
+          </div>
+
+          <div class="deal-sizing-upload-block" id="deal-attach-upload-field">
+            <div class="deal-sizing-upload-drop">
+              <span class="deal-upload-icon">⬆︎</span>
+              <div class="deal-sizing-upload-text">
+                <strong>Upload a Screenshot of Redo Usage Dashboard</strong>
+                <span>Required if attach rate is above 85%</span>
+              </div>
+              <input type="file" class="deal-sizing-file" id="deal-attach-upload" accept="image/*,.pdf" />
+            </div>
+          </div>
+
+          <div class="deal-sizing-toggles">
+            <div class="toggle-row toggle-row--flat">
+              <span>CommentSold</span>
+              <label class="switch">
+                <input type="checkbox" id="toggle-commentsold" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row toggle-row--flat toggle-row--stack">
+              <div class="toggle-stack">
+                <div class="toggle-stack-row">
+                  <span>Ebay</span>
+                  <label class="switch">
+                    <input type="checkbox" id="toggle-ebay" />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+                <div class="toggle-stack-row toggle-stack-row--nested" id="toggle-live-row">
+                  <span>Live Selling</span>
+                  <label class="switch">
+                    <input type="checkbox" id="toggle-live-selling" />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="toggle-row toggle-row--flat">
+              <span>Printing Today</span>
+              <label class="switch">
+                <input type="checkbox" id="toggle-printing" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="modal-actions modal-actions--spread">
+            <button class="button button-secondary" type="button" id="deal-sizing-close">Close</button>
+            <button class="button button-primary" type="button" id="deal-sizing-save">Save</button>
+          </div>
+        </div>
+      </div>
+
       <div class="summary-grid" id="summary-grid">
         <div class="metric-card">
           <div class="metric-main">
@@ -92,12 +211,17 @@
           </div>
           <div class="metric-note">Estimate</div>
         </div>
-        <div class="metric-card">
+        <div class="metric-card metric-card--deal-sizing">
+          <button class="deal-sizing-edit-btn" type="button" id="deal-sizing-edit" aria-label="Expand deal size"></button>
           <div class="metric-main">
             <div class="metric-label">Est. Redo Deal Size</div>
-            <div class="metric-value" id="metric-redo-deal-size">--</div>
+            <div class="metric-value metric-value--deal">
+              <span id="metric-redo-deal-size">--</span>
+            </div>
+            <button class="metric-action deal-sizing-cta" type="button" id="deal-sizing-btn">
+              Click to Deal Size
+            </button>
           </div>
-          <div class="metric-note metric-note--placeholder"></div>
         </div>
         <div class="metric-card">
           <div class="metric-main">
@@ -184,6 +308,29 @@
     const uspsDiscountRow = document.getElementById('usps-discount-row');
     const uspsPercentOffInput = document.getElementById('usps-percent-off');
     const uspsDollarOffInput = document.getElementById('usps-dollar-off');
+    const selectedCarriersEl = document.getElementById('selected-carriers');
+    const dealSizingCarriersEl = document.getElementById('deal-sizing-carriers');
+    const dealSizingBtn = document.getElementById('deal-sizing-btn');
+    const dealSizingEdit = document.getElementById('deal-sizing-edit');
+    const dealSizingModal = document.getElementById('deal-sizing-modal');
+    const dealSizingClose = document.getElementById('deal-sizing-close');
+    const dealAnnualOrders = document.getElementById('deal-annual-orders');
+    const dealAvgLabelCost = document.getElementById('deal-avg-label-cost');
+    const dealPerLabelFee = document.getElementById('deal-per-label-fee');
+    const dealFeeOrderPct = document.getElementById('deal-fee-order-pct');
+    const dealAttachRate = document.getElementById('deal-attach-rate');
+    const dealAttachUploadField = document.getElementById('deal-attach-upload-field');
+    const dealAttachUpload = document.getElementById('deal-attach-upload');
+    const dealSaasFee = document.getElementById('deal-saas-fee');
+    const dealAdjustedOrders = document.getElementById('deal-adjusted-orders');
+    const toggleCommentSold = document.getElementById('toggle-commentsold');
+    const toggleEbay = document.getElementById('toggle-ebay');
+    const toggleLiveSelling = document.getElementById('toggle-live-selling');
+    const toggleLiveRow = document.getElementById('toggle-live-row');
+    const togglePrinting = document.getElementById('toggle-printing');
+    const dealSizingSave = document.getElementById('deal-sizing-save');
+    const dealSizingCard = document.querySelector('.metric-card--deal-sizing');
+    const dealSizeStorageKey = `deal_size_value_${jobId}`;
 
     downloadBtn.addEventListener('click', () => {
       window.location.href = `/download/${jobId}/rate-card`;
@@ -203,6 +350,7 @@
       localStorage.removeItem('origin_zip');
       localStorage.removeItem('annual_orders');
       localStorage.removeItem('flow_type');
+      localStorage.removeItem(dealSizeStorageKey);
       window.location.href = '/';
     });
 
@@ -221,6 +369,8 @@
     ]);
     let annualOrdersMissing = false;
     let discountUpdateTimer = null;
+    let currentMetrics = {};
+    let dealSpreadPerOrder = 0;
 
     function formatMetric(label, value) {
       if (annualOrdersMissing && suppressedMetrics.has(label)) return '--';
@@ -244,32 +394,83 @@
       return Number.isFinite(parsed) ? parsed : null;
     }
 
+    function getSavedDealSize() {
+      const raw = localStorage.getItem(dealSizeStorageKey);
+      if (!raw) return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
     function renderSummary(metrics) {
+      currentMetrics = metrics || {};
       Object.entries(metricMap).forEach(([label, id]) => {
         const el = document.getElementById(id);
         if (!el) return;
+        if (label === 'Est. Redo Deal Size') {
+          const saved = getSavedDealSize();
+          el.textContent = saved !== null ? formatCurrency(saved) : '--';
+          return;
+        }
         el.textContent = formatMetric(label, metrics[label]);
       });
+      const dealValueEl = document.getElementById('metric-redo-deal-size');
+      if (dealSizingCard && dealValueEl) {
+        const saved = getSavedDealSize();
+        dealSizingCard.classList.toggle('has-deal-size', saved !== null);
+      }
     }
 
-    function renderSelectedCarriers(available, selected) {
-      const container = document.getElementById('selected-carriers');
-      container.innerHTML = '';
+    let carrierPercentages = {};
+
+    function formatCarrierPercent(value) {
+      if (!Number.isFinite(value)) return '';
+      return `${Math.round(value * 100)}%`;
+    }
+
+    function renderSelectedCarriers(available, selected, options = {}) {
+      const containers = options.containers || [];
+      const showPercent = !!options.showPercent;
+      containers.forEach((container) => {
+        if (container) container.innerHTML = '';
+      });
       const selectedSet = new Set(selected);
       const ordered = [
         ...available.filter(carrier => selectedSet.has(carrier)),
         ...available.filter(carrier => !selectedSet.has(carrier))
       ];
       ordered.forEach((carrier) => {
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = 'carrier-chip';
-        if (selectedSet.has(carrier)) {
-          chip.classList.add('is-selected');
-        }
-        chip.textContent = carrier;
-        chip.dataset.carrier = carrier;
-        container.appendChild(chip);
+        containers.forEach((container) => {
+          if (!container) return;
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'carrier-chip';
+          if (selectedSet.has(carrier)) {
+            chip.classList.add('is-selected');
+          }
+          if (showPercent) {
+            chip.classList.add('carrier-chip--with-percent');
+            const percentText = formatCarrierPercent(carrierPercentages[carrier]);
+            chip.innerHTML = `
+              <span class="carrier-chip-label">${carrier}</span>
+              <span class="carrier-chip-percent">${percentText}</span>
+            `;
+          } else {
+            chip.textContent = carrier;
+          }
+          chip.dataset.carrier = carrier;
+          container.appendChild(chip);
+        });
+      });
+    }
+
+    function renderCarrierBars(available, selected) {
+      renderSelectedCarriers(available, selected, {
+        containers: [selectedCarriersEl],
+        showPercent: false
+      });
+      renderSelectedCarriers(available, selected, {
+        containers: [dealSizingCarriersEl],
+        showPercent: true
       });
     }
 
@@ -379,8 +580,9 @@
           : '0';
       }
       currentSelection = data.selected_carriers || [];
+      carrierPercentages = data.carrier_percentages || {};
       renderSummary(data.overall || {});
-      renderSelectedCarriers(data.available_carriers || [], currentSelection);
+      renderCarrierBars(data.available_carriers || [], currentSelection);
       const breakdownSection = document.getElementById('breakdown-section');
       if (breakdownSection) {
         breakdownSection.classList.remove('is-hidden');
@@ -421,16 +623,20 @@
       if (!chip || !chip.dataset.carrier) return;
       if (selectionTimer) clearTimeout(selectionTimer);
       selectionTimer = setTimeout(() => {
-        const carriers = Array.from(document.querySelectorAll('.carrier-chip'))
-          .map(el => el.dataset.carrier);
-        const selected = Array.from(document.querySelectorAll('.carrier-chip.is-selected'))
-          .map(el => el.dataset.carrier);
+        const carriers = Array.from(new Set(
+          Array.from(document.querySelectorAll('.carrier-chip'))
+            .map(el => el.dataset.carrier)
+        ));
+        const selected = Array.from(new Set(
+          Array.from(document.querySelectorAll('.carrier-chip.is-selected'))
+            .map(el => el.dataset.carrier)
+        ));
         const target = chip.dataset.carrier;
         const nextSelected = selected.includes(target)
           ? selected.filter(c => c !== target)
           : [...selected, target];
         if (!nextSelected.length) {
-          renderSelectedCarriers(carriers, currentSelection);
+          renderCarrierBars(carriers, currentSelection);
           return;
         }
         loadDashboard(nextSelected, false, true);
@@ -518,6 +724,132 @@
 
     uspsPercentOffInput.addEventListener('input', queueDiscountUpdate);
     uspsDollarOffInput.addEventListener('input', queueDiscountUpdate);
+
+    function formatNumber(value) {
+      if (value === null || value === undefined || isNaN(value)) return '--';
+      return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+    }
+
+    function formatCurrency(value) {
+      if (value === null || value === undefined || isNaN(value)) return '--';
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 0
+      }).format(value);
+    }
+
+    function updateDealSizing() {
+      const annualOrders = Number(dealAnnualOrders.value || 0);
+      const commentSold = toggleCommentSold.checked;
+      const ebay = toggleEbay.checked;
+      const liveSelling = toggleLiveSelling.checked;
+
+      let adjusted = annualOrders;
+      if (commentSold) adjusted *= 0.6;
+      if (ebay) {
+        adjusted *= liveSelling ? 0.6 : 0.95;
+      }
+      dealAdjustedOrders.textContent = formatNumber(adjusted);
+    }
+
+    async function openDealSizing() {
+      const response = await fetch(`/api/deal-sizing/${jobId}`);
+      const data = await response.json();
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      const annualOrders = Number(data.annual_orders || localStorage.getItem('annual_orders') || 0);
+      const winRate = Number(currentMetrics['% Orders We Could Win'] || 0) * 100;
+      const avgLabel = Number(data.avg_label_cost || 0);
+      const perLabelFee = 0.00;
+      const feeOrderPct = 100 - winRate;
+      const attachRate = 85;
+      const saasFee = annualOrders * 0.01;
+      const estRedo = parseMetricValue(currentMetrics['Est. Redo Deal Size']);
+      dealSpreadPerOrder = annualOrders && Number.isFinite(estRedo) ? estRedo / annualOrders : 0;
+
+      dealAnnualOrders.value = annualOrders ? Math.round(annualOrders) : '';
+      dealAvgLabelCost.value = Number.isFinite(avgLabel) ? avgLabel.toFixed(2).replace(/\.00$/, '') : '';
+      dealPerLabelFee.value = Number.isFinite(perLabelFee) ? perLabelFee.toFixed(2) : '';
+      dealFeeOrderPct.value = Number.isFinite(feeOrderPct) ? feeOrderPct.toFixed(1).replace(/\.0$/, '') : '';
+      dealAttachRate.value = attachRate.toFixed(1).replace(/\.0$/, '');
+      dealSaasFee.value = Number.isFinite(saasFee) ? saasFee.toFixed(0) : '';
+      const carrierSpreadEl = document.getElementById('deal-carrier-spread');
+      if (carrierSpreadEl) {
+        carrierSpreadEl.textContent = formatCurrency(dealSpreadPerOrder || 0);
+      }
+
+      toggleLiveRow.style.display = toggleEbay.checked ? 'flex' : 'none';
+      dealAttachUploadField.classList.toggle('is-hidden', attachRate <= 85);
+      dealSizingModal.classList.remove('is-hidden');
+      updateDealSizing();
+    }
+
+    dealSizingBtn.addEventListener('click', openDealSizing);
+    dealSizingEdit.addEventListener('click', openDealSizing);
+    dealSizingClose.addEventListener('click', () => dealSizingModal.classList.add('is-hidden'));
+    dealSizingSave.addEventListener('click', () => {
+      const attachRate = Number(dealAttachRate.value || 0);
+      const requiresUpload = Number.isFinite(attachRate) && attachRate > 85;
+      if (requiresUpload && !dealAttachUpload.files.length) {
+        alert('Upload a screenshot of Redo Usage Dashboard');
+        return;
+      }
+      const annualOrders = Number(dealAnnualOrders.value || 0);
+      const adjustedOrdersText = dealAdjustedOrders.textContent || '';
+      const adjustedOrders = Number(adjustedOrdersText.replace(/,/g, '')) || annualOrders;
+      const rateFactor = (Number.isFinite(attachRate) ? attachRate : 0) / 100;
+      const perLabelFee = Number(dealPerLabelFee.value || 0);
+      const feeOrderPct = (Number(dealFeeOrderPct.value || 0) || 0) / 100;
+      const saasFee = Number(dealSaasFee.value || 0);
+      const labelFeeTotal = perLabelFee * (feeOrderPct * annualOrders);
+      const dealSize = (dealSpreadPerOrder * adjustedOrders * rateFactor) + saasFee + labelFeeTotal;
+      const dealValueEl = document.getElementById('metric-redo-deal-size');
+      if (dealValueEl) {
+        dealValueEl.textContent = formatCurrency(dealSize);
+      }
+      localStorage.setItem(dealSizeStorageKey, String(Number.isFinite(dealSize) ? dealSize : 0));
+      const dealCard = document.querySelector('.metric-card--deal-sizing');
+      if (dealCard) dealCard.classList.add('has-deal-size');
+      dealSizingModal.classList.add('is-hidden');
+    });
+    dealSizingModal.addEventListener('click', (event) => {
+      if (event.target === dealSizingModal) {
+        dealSizingModal.classList.add('is-hidden');
+      }
+    });
+
+    [dealAnnualOrders, dealAvgLabelCost, dealPerLabelFee, dealFeeOrderPct, dealAttachRate, dealSaasFee].forEach((el) => {
+      if (!el) return;
+      el.addEventListener('input', updateDealSizing);
+    });
+
+    dealFeeOrderPct.addEventListener('input', () => {
+      const feePct = Number(dealFeeOrderPct.value || 0);
+      dealFeeOrderPct.value = Number.isFinite(feePct)
+        ? feePct.toFixed(1).replace(/\.0$/, '')
+        : '';
+    });
+
+    dealAttachRate.addEventListener('input', () => {
+      const rate = Number(dealAttachRate.value || 0);
+      const showUpload = Number.isFinite(rate) && rate > 85;
+      dealAttachUploadField.classList.toggle('is-hidden', !showUpload);
+      dealAttachUpload.required = showUpload;
+      if (!showUpload) {
+        dealAttachUpload.value = '';
+      }
+    });
+
+    toggleCommentSold.addEventListener('change', updateDealSizing);
+    toggleEbay.addEventListener('change', () => {
+      toggleLiveRow.style.display = toggleEbay.checked ? 'flex' : 'none';
+      updateDealSizing();
+    });
+    toggleLiveSelling.addEventListener('change', updateDealSizing);
+    togglePrinting.addEventListener('change', updateDealSizing);
   </script>
 </body>
 </html>
