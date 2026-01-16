@@ -1004,10 +1004,14 @@ h1,
 }
 
 .metric-card--deal-sizing .metric-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
   align-items: center;
+  gap: 8px;
+  padding-top: 6px;
   width: 100%;
   height: 100%;
-  justify-content: center;
 }
 
 .metric-card--deal-sizing .metric-action {
@@ -1027,6 +1031,10 @@ h1,
 .metric-card--deal-sizing .metric-main {
   width: 100%;
   align-items: center;
+}
+
+.metric-card--deal-sizing .metric-label {
+  margin-bottom: 0;
 }
 .metric-card--deal-sizing .metric-label {
   text-align: center;
@@ -1162,6 +1170,23 @@ h1,
   font-size: 28px;
   font-weight: 700;
   color: #0f172a;
+}
+
+.deal-summary-spinner {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.deal-summary-spinner .dashboard-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
 }
 
 .deal-summary-input {
@@ -1744,7 +1769,8 @@ h1,
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  padding-top: 6px;
   width: 100%;
 }
 
@@ -1756,7 +1782,7 @@ h1,
   text-align: center;
   white-space: nowrap;
   line-height: 1.2;
-  min-height: 16px;
+  min-height: 32px;
   width: 100%;
 }
 

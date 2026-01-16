@@ -98,6 +98,10 @@
             <div class="deal-summary-card">
               <div class="deal-summary-label">Carrier Spread</div>
               <div class="deal-summary-value" id="deal-carrier-spread">$--</div>
+              <div class="deal-summary-spinner is-hidden" id="deal-carrier-spread-loading">
+                <span class="dashboard-loading-spinner"></span>
+                <span>Calculating...</span>
+              </div>
             </div>
             <div class="deal-summary-card">
               <div class="deal-summary-label">Adjusted Annual Orders</div>
@@ -331,6 +335,7 @@
     const dealSizingSave = document.getElementById('deal-sizing-save');
     const dealSizingCard = document.querySelector('.metric-card--deal-sizing');
     const dealSizeStorageKey = `deal_size_value_${jobId}`;
+    const dealCarrierSpreadLoading = document.getElementById('deal-carrier-spread-loading');
 
     downloadBtn.addEventListener('click', () => {
       window.location.href = `/download/${jobId}/rate-card`;
@@ -371,6 +376,8 @@
     let discountUpdateTimer = null;
     let currentMetrics = {};
     let dealSpreadPerOrder = 0;
+    let dealCarrierDetails = [];
+    let dealCarrierDetailsPending = false;
 
     function formatMetric(label, value) {
       if (annualOrdersMissing && suppressedMetrics.has(label)) return '--';
@@ -539,7 +546,7 @@
       }
     }
 
-    async function loadDashboard(selected = null, initial = false, recalculating = false) {
+    async function loadDashboard(selected = null, initial = false, recalculating = false, refresh = false) {
       if (initial) {
         setLoading(true, 'Loading summary...', true);
       } else if (recalculating) {
@@ -552,7 +559,8 @@
             body: JSON.stringify({ selected_carriers: selected })
           }
         : {};
-      const response = await fetch(`/api/dashboard/${jobId}`, options);
+      const refreshParam = refresh ? '?refresh=1' : '';
+      const response = await fetch(`/api/dashboard/${jobId}${refreshParam}`, options);
       const data = await response.json();
       if (data.error) {
         alert(data.error);
@@ -565,7 +573,7 @@
         } else if (recalculating) {
           setLoading(true, 'Recalculating...', false);
         }
-        setTimeout(() => loadDashboard(selected, initial, recalculating), 700);
+        setTimeout(() => loadDashboard(selected, initial, recalculating, refresh), 700);
         return;
       }
       annualOrdersMissing = !!data.annual_orders_missing;
@@ -590,12 +598,13 @@
       setLoading(false, '', false);
     }
 
-    async function loadPerCarrier() {
+    async function loadPerCarrier(refresh = false) {
       const loadingEl = document.getElementById('breakdown-loading');
       const breakdownSection = document.getElementById('breakdown-section');
       if (breakdownSection) breakdownSection.classList.remove('is-hidden');
       loadingEl.style.display = 'block';
-      const response = await fetch(`/api/dashboard/${jobId}?per_carrier=1`);
+      const refreshParam = refresh ? '&refresh=1' : '';
+      const response = await fetch(`/api/dashboard/${jobId}?per_carrier=1${refreshParam}`);
       const data = await response.json();
       if (data.error) {
         loadingEl.textContent = 'Unable to load carrier breakdown.';
@@ -612,7 +621,7 @@
         renderBreakdown(data.per_carrier);
       }
       if (data.pending) {
-        setTimeout(loadPerCarrier, 900);
+        setTimeout(() => loadPerCarrier(refresh), 900);
         return;
       }
       loadingEl.style.display = 'none';
@@ -718,7 +727,7 @@
           setLoading(false, '', false);
           return;
         }
-        loadDashboard(currentSelection, false, true).then(loadPerCarrier);
+        loadDashboard(currentSelection, false, true, true).then(() => loadPerCarrier(true));
       }, 450);
     }
 
@@ -739,10 +748,84 @@
       }).format(value);
     }
 
+    function saasFeeForOrders(annualOrders) {
+      if (!Number.isFinite(annualOrders) || annualOrders <= 0) return 0;
+      if (annualOrders < 10000) return 99;
+      if (annualOrders < 15000) return 199;
+      if (annualOrders < 35000) return 299;
+      return 399;
+    }
+
     function normalizeCarrierKey(value) {
       return String(value || '')
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '');
+    }
+
+    function buildCarrierDetailMap(details) {
+      const map = {};
+      (details || []).forEach((detail) => {
+        const key = normalizeCarrierKey(detail && detail.carrier);
+        if (!key) return;
+        map[key] = detail;
+      });
+      return map;
+    }
+
+    function carrierPercent(detail) {
+      if (!detail) return 0;
+      let pct = Number(detail.orders_won_pct);
+      if (!Number.isFinite(pct)) return 0;
+      if (pct > 1) pct /= 100;
+      return pct;
+    }
+
+    function carrierSpreadValue(detail) {
+      if (!detail) return null;
+      const spread = Number(detail.spread);
+      return Number.isFinite(spread) ? spread : null;
+    }
+
+    function computeDealSpreadTotals() {
+      const annualOrders = Number(dealAnnualOrders.value || 0);
+      const adjustedOrdersText = dealAdjustedOrders.textContent || '';
+      const adjustedOrders = Number(adjustedOrdersText.replace(/,/g, '')) || annualOrders;
+      const avgLabel = Number(dealAvgLabelCost.value || 0);
+      const selectedSet = new Set(currentSelection || []);
+      const detailMap = buildCarrierDetailMap(dealCarrierDetails);
+
+      if (adjustedOrders <= 0) {
+        return { totalSpread: 0, spreadPerOrder: 0 };
+      }
+
+      let totalSpread = 0;
+      if (selectedSet.has('USPS Market')) {
+        const pct = carrierPercent(detailMap[normalizeCarrierKey('USPS Market')]);
+        totalSpread += 0.2 * pct * adjustedOrders;
+      }
+
+      let upsPct = 0;
+      if (selectedSet.has('UPS Ground')) {
+        upsPct += carrierPercent(detailMap[normalizeCarrierKey('UPS Ground')]);
+      }
+      if (selectedSet.has('UPS Ground Saver')) {
+        upsPct += carrierPercent(detailMap[normalizeCarrierKey('UPS Ground Saver')]);
+      }
+      if (upsPct > 0 && Number.isFinite(avgLabel)) {
+        totalSpread += avgLabel * 0.11 * upsPct * adjustedOrders;
+      }
+
+      ['FedEx', 'Amazon', 'UniUni'].forEach((carrier) => {
+        if (!selectedSet.has(carrier)) return;
+        const detail = detailMap[normalizeCarrierKey(carrier)];
+        const pct = carrierPercent(detail);
+        const spread = carrierSpreadValue(detail);
+        if (!pct || spread === null) return;
+        totalSpread += spread * pct * adjustedOrders;
+      });
+
+      const spreadPerOrder = adjustedOrders > 0 ? totalSpread / adjustedOrders : 0;
+      return { totalSpread, spreadPerOrder };
     }
 
     function updateDealSizing() {
@@ -757,10 +840,26 @@
         adjusted *= liveSelling ? 0.6 : 0.95;
       }
       dealAdjustedOrders.textContent = formatNumber(adjusted);
+      if (dealCarrierSpreadLoading) {
+        dealCarrierSpreadLoading.classList.toggle('is-hidden', !dealCarrierDetailsPending);
+      }
+      const spreadTotals = computeDealSpreadTotals();
+      dealSpreadPerOrder = spreadTotals.spreadPerOrder || 0;
+      const carrierSpreadEl = document.getElementById('deal-carrier-spread');
+      if (carrierSpreadEl) {
+        carrierSpreadEl.textContent = formatCurrency(spreadTotals.totalSpread || 0);
+      }
     }
 
     async function openDealSizing() {
-      const response = await fetch(`/api/deal-sizing/${jobId}`);
+      localStorage.removeItem(dealSizeStorageKey);
+      dealCarrierDetails = [];
+      dealCarrierDetailsPending = false;
+      const response = await fetch(`/api/deal-sizing/${jobId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selected_carriers: currentSelection || [] })
+      });
       const data = await response.json();
       if (data.error) {
         alert(data.error);
@@ -772,43 +871,9 @@
       const perLabelFee = 0.00;
       const feeOrderPct = 100 - winRate;
       const attachRate = 85;
-      const saasFee = annualOrders * 0.01;
-      const carrierDetails = Array.isArray(data.carrier_details) ? data.carrier_details : [];
-      const detailMap = {};
-      carrierDetails.forEach((detail) => {
-        const key = normalizeCarrierKey(detail && detail.carrier);
-        if (!key) return;
-        detailMap[key] = detail;
-      });
-
-      let weightedSpread = 0;
-      let totalWeight = 0;
-      let spreadSum = 0;
-      let spreadCount = 0;
-      (currentSelection || []).forEach((carrier) => {
-        const detail = detailMap[normalizeCarrierKey(carrier)];
-        if (!detail) return;
-        const spread = Number(detail.spread);
-        if (!Number.isFinite(spread)) return;
-        let weight = Number(detail.orders_won_pct);
-        if (!Number.isFinite(weight)) weight = null;
-        if (weight !== null && weight > 1) weight /= 100;
-        if (weight !== null) {
-          weightedSpread += spread * weight;
-          totalWeight += weight;
-        }
-        spreadSum += spread;
-        spreadCount += 1;
-      });
-
-      if (totalWeight > 0) {
-        dealSpreadPerOrder = weightedSpread / totalWeight;
-      } else if (spreadCount > 0) {
-        dealSpreadPerOrder = spreadSum / spreadCount;
-      } else {
-        const estRedo = parseMetricValue(currentMetrics['Est. Redo Deal Size']);
-        dealSpreadPerOrder = annualOrders && Number.isFinite(estRedo) ? estRedo / annualOrders : 0;
-      }
+      const saasFee = saasFeeForOrders(annualOrders);
+      dealCarrierDetails = Array.isArray(data.carrier_details) ? data.carrier_details : [];
+      dealCarrierDetailsPending = !!data.carrier_details_pending;
 
       dealAnnualOrders.value = annualOrders ? Math.round(annualOrders) : '';
       dealAvgLabelCost.value = Number.isFinite(avgLabel) ? avgLabel.toFixed(2).replace(/\.00$/, '') : '';
@@ -816,15 +881,27 @@
       dealFeeOrderPct.value = Number.isFinite(feeOrderPct) ? feeOrderPct.toFixed(1).replace(/\.0$/, '') : '';
       dealAttachRate.value = attachRate.toFixed(1).replace(/\.0$/, '');
       dealSaasFee.value = Number.isFinite(saasFee) ? saasFee.toFixed(0) : '';
-      const carrierSpreadEl = document.getElementById('deal-carrier-spread');
-      if (carrierSpreadEl) {
-        carrierSpreadEl.textContent = formatCurrency(dealSpreadPerOrder || 0);
-      }
 
       toggleLiveRow.style.display = toggleEbay.checked ? 'flex' : 'none';
       dealAttachUploadField.classList.toggle('is-hidden', attachRate <= 85);
       dealSizingModal.classList.remove('is-hidden');
       updateDealSizing();
+
+      if (data.carrier_details_pending) {
+        setTimeout(async () => {
+          const refresh = await fetch(`/api/deal-sizing/${jobId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ selected_carriers: currentSelection || [] })
+          });
+          const refreshed = await refresh.json();
+          if (!refreshed.error && Array.isArray(refreshed.carrier_details)) {
+            dealCarrierDetails = refreshed.carrier_details;
+            dealCarrierDetailsPending = !!refreshed.carrier_details_pending;
+            updateDealSizing();
+          }
+        }, 900);
+      }
     }
 
     dealSizingBtn.addEventListener('click', openDealSizing);
@@ -838,14 +915,12 @@
         return;
       }
       const annualOrders = Number(dealAnnualOrders.value || 0);
-      const adjustedOrdersText = dealAdjustedOrders.textContent || '';
-      const adjustedOrders = Number(adjustedOrdersText.replace(/,/g, '')) || annualOrders;
-      const rateFactor = (Number.isFinite(attachRate) ? attachRate : 0) / 100;
       const perLabelFee = Number(dealPerLabelFee.value || 0);
       const feeOrderPct = (Number(dealFeeOrderPct.value || 0) || 0) / 100;
       const saasFee = Number(dealSaasFee.value || 0);
       const labelFeeTotal = perLabelFee * (feeOrderPct * annualOrders);
-      const dealSize = (dealSpreadPerOrder * adjustedOrders * rateFactor) + saasFee + labelFeeTotal;
+      const spreadTotals = computeDealSpreadTotals();
+      const dealSize = spreadTotals.totalSpread + saasFee + labelFeeTotal;
       const dealValueEl = document.getElementById('metric-redo-deal-size');
       if (dealValueEl) {
         dealValueEl.textContent = formatCurrency(dealSize);
