@@ -697,6 +697,57 @@ def _compute_first_mile_weight(weight_oz, weight_lbs):
         )
     return output.round(4)
 
+def _coerce_float(value):
+    if value is None or value == '':
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+def _normalize_percent(value):
+    number = _coerce_float(value)
+    if number is None:
+        return None
+    if 1 < number <= 100:
+        return number / 100
+    return number
+
+@lru_cache(maxsize=16)
+def _load_carrier_details_cached(rate_card_path_str, source_mtime):
+    path = Path(rate_card_path_str)
+    if not path.exists():
+        return {}
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    if 'Pricing & Summary' not in wb.sheetnames:
+        wb.close()
+        return {}
+    ws = wb['Pricing & Summary']
+    details = {}
+    for row in range(35, 41):
+        carrier = ws.cell(row, 2).value
+        if not carrier:
+            continue
+        spread = _coerce_float(ws.cell(row, 4).value)
+        orders_won_pct = _normalize_percent(ws.cell(row, 3).value)
+        key = normalize_redo_label(carrier)
+        details[key] = {
+            'carrier': str(carrier).strip(),
+            'spread': spread,
+            'orders_won_pct': orders_won_pct
+        }
+    wb.close()
+    return details
+
+def _load_carrier_details(rate_card_path, source_mtime=None):
+    if not rate_card_path:
+        return {}
+    try:
+        mtime = source_mtime or int(rate_card_path.stat().st_mtime)
+    except Exception:
+        mtime = 0
+    return _load_carrier_details_cached(str(rate_card_path), mtime)
+
 def _mode_or_min(series):
     series = series.dropna()
     if series.empty:
@@ -2953,6 +3004,7 @@ def dashboard_data(job_id):
         per_carrier = []
         include_per_carrier = request.args.get('per_carrier') == '1'
         if request.method == 'GET' and include_per_carrier:
+            carrier_details = _load_carrier_details(rate_card_files[0], source_mtime)
             selection_key = _selection_cache_key(selected_dashboard)
             overall_metrics = _read_summary_cache(job_dir, source_mtime, selection_key) or {}
             summary_pending = not bool(overall_metrics)
@@ -2973,6 +3025,18 @@ def dashboard_data(job_id):
                     entry for entry in per_carrier
                     if entry.get('carrier') in available_carriers
                 ]
+                if carrier_details:
+                    for entry in per_carrier:
+                        carrier_key = normalize_redo_label(entry.get('carrier'))
+                        detail = carrier_details.get(carrier_key)
+                        if not detail:
+                            continue
+                        metrics = entry.get('metrics') or {}
+                        if detail.get('spread') is not None:
+                            metrics['Spread Available'] = detail.get('spread')
+                        if detail.get('orders_won_pct') is not None:
+                            metrics['% Orders We Could Win'] = detail.get('orders_won_pct')
+                        entry['metrics'] = metrics
             per_carrier_count = len(per_carrier)
             if annual_orders_missing:
                 overall_metrics = {**overall_metrics}
@@ -3146,9 +3210,15 @@ def deal_sizing_data(job_id):
             mapping_config = json.load(f)
         annual_orders = mapping_config.get('annual_orders')
         avg_label_cost = _avg_label_cost_from_job(job_dir)
+        carrier_details = []
+        rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+        if rate_card_files:
+            detail_map = _load_carrier_details(rate_card_files[0])
+            carrier_details = list(detail_map.values())
         return jsonify({
             'annual_orders': annual_orders,
-            'avg_label_cost': avg_label_cost
+            'avg_label_cost': avg_label_cost,
+            'carrier_details': carrier_details
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500

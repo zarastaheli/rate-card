@@ -282,7 +282,7 @@
       <div class="dashboard-footnote dashboard-footnote--alert">All Figures Are Estimates - Final Deal Size Will Be Determined By Deal Desk</div>
       <div class="dashboard-bottom-actions">
         <button class="button button-secondary" type="button" id="back-to-redo-btn">Back</button>
-        <button class="button button-secondary" type="button" id="start-over-btn">Start over</button>
+        <button class="button button-secondary" type="button" id="start-over-btn">Start Over</button>
       </div>
       </div>
 
@@ -424,7 +424,7 @@
 
     function formatCarrierPercent(value) {
       if (!Number.isFinite(value)) return '';
-      return `${Math.round(value * 100)}%`;
+      return `${Math.round(value * 100)}`;
     }
 
     function renderSelectedCarriers(available, selected, options = {}) {
@@ -470,7 +470,7 @@
       });
       renderSelectedCarriers(available, selected, {
         containers: [dealSizingCarriersEl],
-        showPercent: true
+        showPercent: false
       });
     }
 
@@ -739,6 +739,12 @@
       }).format(value);
     }
 
+    function normalizeCarrierKey(value) {
+      return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
+    }
+
     function updateDealSizing() {
       const annualOrders = Number(dealAnnualOrders.value || 0);
       const commentSold = toggleCommentSold.checked;
@@ -767,8 +773,42 @@
       const feeOrderPct = 100 - winRate;
       const attachRate = 85;
       const saasFee = annualOrders * 0.01;
-      const estRedo = parseMetricValue(currentMetrics['Est. Redo Deal Size']);
-      dealSpreadPerOrder = annualOrders && Number.isFinite(estRedo) ? estRedo / annualOrders : 0;
+      const carrierDetails = Array.isArray(data.carrier_details) ? data.carrier_details : [];
+      const detailMap = {};
+      carrierDetails.forEach((detail) => {
+        const key = normalizeCarrierKey(detail && detail.carrier);
+        if (!key) return;
+        detailMap[key] = detail;
+      });
+
+      let weightedSpread = 0;
+      let totalWeight = 0;
+      let spreadSum = 0;
+      let spreadCount = 0;
+      (currentSelection || []).forEach((carrier) => {
+        const detail = detailMap[normalizeCarrierKey(carrier)];
+        if (!detail) return;
+        const spread = Number(detail.spread);
+        if (!Number.isFinite(spread)) return;
+        let weight = Number(detail.orders_won_pct);
+        if (!Number.isFinite(weight)) weight = null;
+        if (weight !== null && weight > 1) weight /= 100;
+        if (weight !== null) {
+          weightedSpread += spread * weight;
+          totalWeight += weight;
+        }
+        spreadSum += spread;
+        spreadCount += 1;
+      });
+
+      if (totalWeight > 0) {
+        dealSpreadPerOrder = weightedSpread / totalWeight;
+      } else if (spreadCount > 0) {
+        dealSpreadPerOrder = spreadSum / spreadCount;
+      } else {
+        const estRedo = parseMetricValue(currentMetrics['Est. Redo Deal Size']);
+        dealSpreadPerOrder = annualOrders && Number.isFinite(estRedo) ? estRedo / annualOrders : 0;
+      }
 
       dealAnnualOrders.value = annualOrders ? Math.round(annualOrders) : '';
       dealAvgLabelCost.value = Number.isFinite(avgLabel) ? avgLabel.toFixed(2).replace(/\.00$/, '') : '';

@@ -977,7 +977,7 @@ h1,
   padding: 0;
   background: transparent;
   cursor: pointer;
-  display: inline-flex;
+  display: none;
   align-items: center;
   justify-content: center;
 }
@@ -989,6 +989,10 @@ h1,
   border-right: 2px solid #111827;
   border-top: 2px solid #111827;
   transform: rotate(45deg);
+}
+
+.metric-card--deal-sizing.has-deal-size .deal-sizing-edit-btn {
+  display: inline-flex;
 }
 
 .metric-card--deal-sizing.has-deal-size .deal-sizing-cta {
@@ -1008,11 +1012,12 @@ h1,
 
 .metric-card--deal-sizing .metric-action {
   align-self: center;
-  margin-top: auto;
+  margin-top: 0;
   justify-self: center;
   display: inline-flex;
   margin-left: auto;
   margin-right: auto;
+  min-height: 30px;
 }
 
 .metric-card--deal-sizing.has-deal-size .metric-value {
@@ -1074,7 +1079,7 @@ h1,
 .deal-input-filled {
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .deal-input-compact {
@@ -1082,7 +1087,7 @@ h1,
   text-align: center;
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .deal-input-attach {
@@ -1261,6 +1266,8 @@ h1,
   position: relative;
   display: flex;
   align-items: center;
+  justify-content: center;
+  text-align: center;
   gap: 12px;
   padding: 16px;
   border: 1px dashed #cbd5e1;
@@ -1268,6 +1275,12 @@ h1,
   background: #ffffff;
   cursor: pointer;
   transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.deal-upload-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .deal-sizing-upload-drop:hover {
@@ -1477,8 +1490,8 @@ h1,
 
 .entry-icon {
   display: inline-flex;
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
   align-items: center;
@@ -1492,7 +1505,7 @@ h1,
 }
 
 .entry-option-title {
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 500;
   margin-bottom: 4px;
   color: #0f172a;
@@ -1504,7 +1517,7 @@ h1,
 }
 
 .entry-option-arrow {
-  font-size: 20px;
+  font-size: 24px;
   color: #94a3b8;
 }
 
@@ -1524,8 +1537,8 @@ h1,
 }
 
 .entry-admin-icon {
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
   display: inline-flex;
@@ -1538,7 +1551,7 @@ h1,
   flex: 1;
   text-align: center;
   font-weight: 500;
-  font-size: 15px;
+  font-size: 18px;
   color: #0f172a;
 }
 
