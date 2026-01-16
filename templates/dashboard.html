@@ -96,7 +96,11 @@
 
           <div class="deal-sizing-summary">
             <div class="deal-summary-card">
-              <div class="deal-summary-label">Carrier Spread</div>
+              <div class="deal-summary-label">
+                <span class="label-with-hint">Carrier Spread
+                  <button class="calc-hint" type="button" aria-label="How calculated" title="Total spread: USPS $0.20/order; UPS avg label cost * 11%; FedEx/Amazon/UniUni use Carrier Details spread. For each carrier: spread * % orders won * adjusted orders.">?</button>
+                </span>
+              </div>
               <div class="deal-summary-value" id="deal-carrier-spread">$--</div>
               <div class="deal-summary-spinner is-hidden" id="deal-carrier-spread-loading">
                 <span class="dashboard-loading-spinner"></span>
@@ -104,11 +108,19 @@
               </div>
             </div>
             <div class="deal-summary-card">
-              <div class="deal-summary-label">Adjusted Annual Orders</div>
+              <div class="deal-summary-label">
+                <span class="label-with-hint">Adjusted Annual Orders
+                  <button class="calc-hint" type="button" aria-label="How calculated" title="Adjusted Annual Orders = Annual Orders with CommentSold/Ebay/Live Selling reductions applied.">?</button>
+                </span>
+              </div>
               <div class="deal-summary-value" id="deal-adjusted-orders">--</div>
             </div>
             <div class="deal-summary-card">
-              <div class="deal-summary-label">Attach Rate</div>
+              <div class="deal-summary-label">
+                <span class="label-with-hint">Attach Rate
+                  <button class="calc-hint" type="button" aria-label="How calculated" title="Attach Rate = user input (default 85%). >85% requires upload.">?</button>
+                </span>
+              </div>
               <div class="deal-summary-input">
                 <input type="number" class="text-input deal-input-filled deal-input-attach" id="deal-attach-rate" min="0" max="100" step="0.1" />
                 <span class="deal-sizing-suffix">%</span>
@@ -118,21 +130,33 @@
 
           <div class="deal-sizing-grid deal-sizing-grid--compact">
             <div class="deal-sizing-field">
-              <label class="deal-sizing-label" for="deal-saas-fee">SaaS Fee</label>
+              <label class="deal-sizing-label" for="deal-saas-fee">
+                <span class="label-with-hint">SaaS Fee: <span id="deal-saas-tier">Starter Tier</span>
+                  <button class="calc-hint" type="button" aria-label="How calculated" title="SaaS Fee tiers by annual orders: 0-5k $99, 5-15k $199, 15-35k $299, 35-50k $399, 50k+ Enterprise.">?</button>
+                </span>
+              </label>
               <div class="deal-sizing-input">
                 <span class="deal-sizing-prefix">$</span>
                 <input type="number" class="text-input deal-input-filled" id="deal-saas-fee" min="0" step="0.01" />
               </div>
             </div>
             <div class="deal-sizing-field">
-              <label class="deal-sizing-label" for="deal-per-label-fee">Per Label Fee</label>
+              <label class="deal-sizing-label" for="deal-per-label-fee">
+                <span class="label-with-hint">Per Label Fee
+                  <button class="calc-hint" type="button" aria-label="How calculated" title="Per Label Fee = user input. Total = per label fee * (% of orders with fee) * annual orders.">?</button>
+                </span>
+              </label>
               <div class="deal-sizing-input">
                 <span class="deal-sizing-prefix">$</span>
                 <input type="number" class="text-input deal-input-filled" id="deal-per-label-fee" min="0" step="0.01" />
               </div>
             </div>
             <div class="deal-sizing-field">
-              <label class="deal-sizing-label" for="deal-fee-order-pct">% Of Orders With Fee</label>
+              <label class="deal-sizing-label" for="deal-fee-order-pct">
+                <span class="label-with-hint">% Of Orders With Fee
+                  <button class="calc-hint" type="button" aria-label="How calculated" title="% of Orders With Fee = user input. Used with Per Label Fee to compute fee total.">?</button>
+                </span>
+              </label>
               <div class="deal-sizing-input">
                 <input type="number" class="text-input deal-input-filled" id="deal-fee-order-pct" min="0" max="100" step="0.1" />
                 <span class="deal-sizing-suffix">%</span>
@@ -142,14 +166,24 @@
 
           <div class="deal-sizing-grid deal-sizing-grid--inputs">
             <div class="deal-sizing-field">
-              <label class="deal-sizing-label" for="deal-annual-orders">Annual Orders</label>
-              <input type="number" class="text-input deal-input-filled" id="deal-annual-orders" min="0" />
+              <label class="deal-sizing-label" for="deal-annual-orders">
+                <span class="label-with-hint">Annual Orders
+                  <button class="calc-hint" type="button" aria-label="How calculated" title="From mapping annual orders input (saved in mapping.json).">?</button>
+                </span>
+                <span class="required-asterisk">*</span>
+              </label>
+              <input type="number" class="text-input deal-input-filled" id="deal-annual-orders" min="0" required />
             </div>
             <div class="deal-sizing-field">
-              <label class="deal-sizing-label" for="deal-avg-label-cost">Average Label Cost</label>
+              <label class="deal-sizing-label" for="deal-avg-label-cost">
+                <span class="label-with-hint">Average Label Cost
+                  <button class="calc-hint" type="button" aria-label="How calculated" title="Average Label Cost = mean of Label Cost from normalized invoice.">?</button>
+                </span>
+                <span class="required-asterisk">*</span>
+              </label>
               <div class="deal-sizing-input">
                 <span class="deal-sizing-prefix">$</span>
-                <input type="number" class="text-input deal-input-filled" id="deal-avg-label-cost" min="0" step="0.01" />
+                <input type="number" class="text-input deal-input-filled" id="deal-avg-label-cost" min="0" step="0.01" required />
               </div>
             </div>
           </div>
@@ -167,7 +201,9 @@
 
           <div class="deal-sizing-toggles">
             <div class="toggle-row toggle-row--flat">
-              <span>CommentSold</span>
+              <span class="label-with-hint">CommentSold
+                <button class="calc-hint" type="button" aria-label="How calculated" title="CommentSold reduces adjusted orders to 60%.">?</button>
+              </span>
               <label class="switch">
                 <input type="checkbox" id="toggle-commentsold" />
                 <span class="slider"></span>
@@ -176,14 +212,18 @@
             <div class="toggle-row toggle-row--flat toggle-row--stack">
               <div class="toggle-stack">
                 <div class="toggle-stack-row">
-                  <span>Ebay</span>
+                  <span class="label-with-hint">Ebay
+                    <button class="calc-hint" type="button" aria-label="How calculated" title="Ebay reduces adjusted orders to 95% (or 60% if Live Selling).">?</button>
+                  </span>
                   <label class="switch">
                     <input type="checkbox" id="toggle-ebay" />
                     <span class="slider"></span>
                   </label>
                 </div>
                 <div class="toggle-stack-row toggle-stack-row--nested" id="toggle-live-row">
-                  <span>Live Selling</span>
+                  <span class="label-with-hint">Live Selling
+                    <button class="calc-hint" type="button" aria-label="How calculated" title="Live Selling only applies when Ebay is on; adjusted orders reduce to 60%.">?</button>
+                  </span>
                   <label class="switch">
                     <input type="checkbox" id="toggle-live-selling" />
                     <span class="slider"></span>
@@ -192,7 +232,9 @@
               </div>
             </div>
             <div class="toggle-row toggle-row--flat">
-              <span>Printing Today</span>
+              <span class="label-with-hint">Printing Today
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Printing Today currently does not change calculations.">?</button>
+              </span>
               <label class="switch">
                 <input type="checkbox" id="toggle-printing" />
                 <span class="slider"></span>
@@ -210,7 +252,11 @@
       <div class="summary-grid" id="summary-grid">
         <div class="metric-card">
           <div class="metric-main">
-            <div class="metric-label">Est. Merchant Annual Savings</div>
+            <div class="metric-label">
+              <span class="label-with-hint">Est. Merchant Annual Savings
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C5 (Est. Merchant Annual Savings).">?</button>
+              </span>
+            </div>
             <div class="metric-value" id="metric-merchant-savings">--</div>
           </div>
           <div class="metric-note">Estimate</div>
@@ -218,7 +264,11 @@
         <div class="metric-card metric-card--deal-sizing">
           <button class="deal-sizing-edit-btn" type="button" id="deal-sizing-edit" aria-label="Expand deal size"></button>
           <div class="metric-main">
-            <div class="metric-label">Est. Redo Deal Size</div>
+            <div class="metric-label">
+              <span class="label-with-hint">Est. Redo Deal Size
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Deal size = total spread + per-label fees + SaaS (from deal sizing inputs).">?</button>
+              </span>
+            </div>
             <div class="metric-value metric-value--deal">
               <span id="metric-redo-deal-size">--</span>
             </div>
@@ -229,21 +279,33 @@
         </div>
         <div class="metric-card">
           <div class="metric-main">
-            <div class="metric-label">Total Spread Avaliable</div>
+            <div class="metric-label">
+              <span class="label-with-hint">Total Spread Avaliable
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C7 (Total Spread Available).">?</button>
+              </span>
+            </div>
             <div class="metric-value" id="metric-spread-available">--</div>
           </div>
           <div class="metric-note metric-note--placeholder"></div>
         </div>
         <div class="metric-card">
           <div class="metric-main">
-            <div class="metric-label">% Orders We Could Win</div>
+            <div class="metric-label">
+              <span class="label-with-hint">% Orders We Could Win
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C11 (% Orders We Could Win).">?</button>
+              </span>
+            </div>
             <div class="metric-value" id="metric-orders-could-win">--</div>
           </div>
           <div class="metric-note metric-note--placeholder"></div>
         </div>
         <div class="metric-card">
           <div class="metric-main">
-            <div class="metric-label">% Orders Won W/ Spread</div>
+            <div class="metric-label">
+              <span class="label-with-hint">% Orders Won W/ Spread
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C12 (% Orders Won W/ Spread).">?</button>
+              </span>
+            </div>
             <div class="metric-value" id="metric-orders-won-spread">--</div>
           </div>
           <div class="metric-note metric-note--placeholder"></div>
@@ -255,11 +317,31 @@
         <div class="breakdown-table">
           <div class="breakdown-row breakdown-header">
             <div>Carrier</div>
-            <div>Est. Merchant Annual Savings</div>
-            <div>Est. Redo Deal Size</div>
-            <div>Total Spread Avaliable</div>
-            <div>% Orders We Could Win</div>
-            <div>% Orders Won W/ Spread</div>
+            <div>
+              <span class="label-with-hint">Est. Merchant Annual Savings
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C5 computed with only this carrier enabled.">?</button>
+              </span>
+            </div>
+            <div>
+              <span class="label-with-hint">Est. Redo Deal Size
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C6 computed with only this carrier enabled.">?</button>
+              </span>
+            </div>
+            <div>
+              <span class="label-with-hint">Total Spread Avaliable
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C7 computed with only this carrier enabled.">?</button>
+              </span>
+            </div>
+            <div>
+              <span class="label-with-hint">% Orders We Could Win
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C11 computed with only this carrier enabled.">?</button>
+              </span>
+            </div>
+            <div>
+              <span class="label-with-hint">% Orders Won W/ Spread
+                <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C12 computed with only this carrier enabled.">?</button>
+              </span>
+            </div>
           </div>
           <div class="breakdown-loading" id="breakdown-loading">Loading carrier breakdown...</div>
           <div id="carrier-breakdown"></div>
@@ -268,14 +350,22 @@
 
       <div class="usps-discount-row is-hidden" id="usps-discount-row">
         <div class="usps-discount-card">
-          <label class="usps-discount-label" for="usps-percent-off">% Off USPS Market Rate</label>
+          <label class="usps-discount-label" for="usps-percent-off">
+            <span class="label-with-hint">% Off USPS Market Rate
+              <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C19.">?</button>
+            </span>
+          </label>
           <div class="usps-discount-input">
             <input type="number" class="text-input" id="usps-percent-off" min="0" step="0.1" />
             <span class="usps-discount-suffix">%</span>
           </div>
         </div>
         <div class="usps-discount-card">
-          <label class="usps-discount-label" for="usps-dollar-off">$ Off USPS Market Rate</label>
+          <label class="usps-discount-label" for="usps-dollar-off">
+            <span class="label-with-hint">$ Off USPS Market Rate
+              <button class="calc-hint" type="button" aria-label="How calculated" title="Rate card: Pricing & Summary!C20.">?</button>
+            </span>
+          </label>
           <div class="usps-discount-input">
             <span class="usps-discount-prefix">$</span>
             <input type="number" class="text-input" id="usps-dollar-off" min="0" step="0.01" />
@@ -326,6 +416,7 @@
     const dealAttachUploadField = document.getElementById('deal-attach-upload-field');
     const dealAttachUpload = document.getElementById('deal-attach-upload');
     const dealSaasFee = document.getElementById('deal-saas-fee');
+    const dealSaasTierLabel = document.getElementById('deal-saas-tier');
     const dealAdjustedOrders = document.getElementById('deal-adjusted-orders');
     const toggleCommentSold = document.getElementById('toggle-commentsold');
     const toggleEbay = document.getElementById('toggle-ebay');
@@ -337,6 +428,35 @@
     const dealSizeStorageKey = `deal_size_value_${jobId}`;
     const dealInputsStorageKey = `deal_inputs_${jobId}`;
     const dealCarrierSpreadLoading = document.getElementById('deal-carrier-spread-loading');
+    const SHOW_CALC_HINTS = false;
+
+    if (SHOW_CALC_HINTS) {
+      document.documentElement.classList.add('show-calc-hints');
+      const hintButtons = Array.from(document.querySelectorAll('.calc-hint'));
+      hintButtons.forEach((button) => {
+        const title = button.getAttribute('title') || '';
+        if (title && !button.dataset.hint) {
+          button.dataset.hint = title;
+        }
+        button.removeAttribute('title');
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const isOpen = button.classList.contains('is-open');
+          hintButtons.forEach((btn) => btn.classList.remove('is-open'));
+          if (!isOpen) {
+            button.classList.add('is-open');
+          }
+        });
+      });
+      document.addEventListener('click', () => {
+        hintButtons.forEach((btn) => btn.classList.remove('is-open'));
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          hintButtons.forEach((btn) => btn.classList.remove('is-open'));
+        }
+      });
+    }
 
     downloadBtn.addEventListener('click', () => {
       window.location.href = `/download/${jobId}/rate-card`;
@@ -537,6 +657,13 @@
         { key: '% Orders We Could Win', label: '% Orders We Could Win' },
         { key: '% Orders Won W/ Spread', label: '% Orders Won W/ Spread' }
       ];
+      const breakdownHints = {
+        'Est. Merchant Annual Savings': 'Rate card: Pricing & Summary!C5 computed with only this carrier enabled.',
+        'Est. Redo Deal Size': 'Rate card: Pricing & Summary!C6 computed with only this carrier enabled.',
+        'Spread Available': 'Rate card: Pricing & Summary!C7 computed with only this carrier enabled.',
+        '% Orders We Could Win': 'Rate card: Pricing & Summary!C11 computed with only this carrier enabled.',
+        '% Orders Won W/ Spread': 'Rate card: Pricing & Summary!C12 computed with only this carrier enabled.'
+      };
       const maxValues = {};
       columns.forEach(({ key }) => {
         const values = perCarrier
@@ -556,10 +683,15 @@
           const formatted = formatMetric(key, raw);
           const numeric = parseMetricValue(raw);
           const max = maxValues[key];
+          const hint = breakdownHints[key] || '';
+          const wrap = (value) => {
+            if (!hint || value === '--') return value;
+            return `<span class="breakdown-hint" tabindex="0" data-hint="${hint}">${value}</span>`;
+          };
           if (numeric !== null && max !== null && numeric === max) {
-            return `<span class="metric-pill">${formatted}</span>`;
+            return wrap(`<span class="metric-pill" data-hint="Highest value in column.">${formatted}</span>`);
           }
-          return formatted;
+          return wrap(formatted);
         };
         rowEl.innerHTML = `
           <div>${row.carrier}</div>
@@ -796,12 +928,23 @@
       }).format(value);
     }
 
-    function saasFeeForOrders(annualOrders) {
-      if (!Number.isFinite(annualOrders) || annualOrders <= 0) return 0;
-      if (annualOrders < 10000) return 99;
-      if (annualOrders < 15000) return 199;
-      if (annualOrders < 35000) return 299;
-      return 399;
+    function saasTierForOrders(annualOrders) {
+      if (!Number.isFinite(annualOrders) || annualOrders <= 0) {
+        return { fee: 0, tier: 'Starter Tier' };
+      }
+      if (annualOrders < 5000) {
+        return { fee: 99, tier: 'Starter Tier' };
+      }
+      if (annualOrders < 15000) {
+        return { fee: 199, tier: 'Growth Tier' };
+      }
+      if (annualOrders < 35000) {
+        return { fee: 299, tier: 'Pro Tier' };
+      }
+      if (annualOrders < 50000) {
+        return { fee: 399, tier: 'Scale Tier' };
+      }
+      return { fee: 399, tier: 'Enterprise Tier' };
     }
 
     function normalizeCarrierKey(value) {
@@ -849,6 +992,7 @@
       commentSold,
       ebay,
       liveSelling,
+      attachRate,
       selectedCarriers,
       carrierDetails
     }) {
@@ -858,18 +1002,20 @@
         ebay,
         liveSelling
       );
+      const attachFactor = Number.isFinite(Number(attachRate)) ? Number(attachRate) / 100 : 1;
+      const effectiveOrders = adjustedOrders * attachFactor;
       const avgLabel = Number(avgLabelCost || 0);
       const selectedSet = new Set(selectedCarriers || currentSelection || []);
       const detailMap = buildCarrierDetailMap(carrierDetails || dealCarrierDetails);
 
-      if (adjustedOrders <= 0) {
+      if (effectiveOrders <= 0) {
         return { totalSpread: 0, spreadPerOrder: 0, adjustedOrders };
       }
 
       let totalSpread = 0;
       if (selectedSet.has('USPS Market')) {
         const pct = carrierPercent(detailMap[normalizeCarrierKey('USPS Market')]);
-        totalSpread += 0.2 * pct * adjustedOrders;
+        totalSpread += 0.2 * pct * effectiveOrders;
       }
 
       let upsPct = 0;
@@ -880,7 +1026,7 @@
         upsPct += carrierPercent(detailMap[normalizeCarrierKey('UPS Ground Saver')]);
       }
       if (upsPct > 0 && Number.isFinite(avgLabel)) {
-        totalSpread += avgLabel * 0.11 * upsPct * adjustedOrders;
+        totalSpread += avgLabel * 0.11 * upsPct * effectiveOrders;
       }
 
       ['FedEx', 'Amazon', 'UniUni'].forEach((carrier) => {
@@ -889,7 +1035,7 @@
         const pct = carrierPercent(detail);
         const spread = carrierSpreadValue(detail);
         if (!pct || spread === null) return;
-        totalSpread += spread * pct * adjustedOrders;
+        totalSpread += spread * pct * effectiveOrders;
       });
 
       const spreadPerOrder = adjustedOrders > 0 ? totalSpread / adjustedOrders : 0;
@@ -904,6 +1050,7 @@
         commentSold: toggleCommentSold.checked,
         ebay: toggleEbay.checked,
         liveSelling: toggleLiveSelling.checked,
+        attachRate: Number(dealAttachRate.value || 0),
         selectedCarriers: currentSelection || [],
         carrierDetails: dealCarrierDetails
       });
@@ -914,6 +1061,10 @@
       const commentSold = toggleCommentSold.checked;
       const ebay = toggleEbay.checked;
       const liveSelling = toggleLiveSelling.checked;
+      const saasTier = saasTierForOrders(annualOrders);
+      if (dealSaasTierLabel) {
+        dealSaasTierLabel.textContent = saasTier.tier;
+      }
 
       const spreadTotals = computeDealSpreadTotalsFromValues({
         annualOrders,
@@ -921,6 +1072,7 @@
         commentSold,
         ebay,
         liveSelling,
+        attachRate: Number(dealAttachRate.value || 0),
         selectedCarriers: currentSelection || [],
         carrierDetails: dealCarrierDetails
       });
@@ -960,6 +1112,7 @@
         commentSold: !!stored.commentSold,
         ebay: !!stored.ebay,
         liveSelling: !!stored.liveSelling,
+        attachRate: Number(stored.attachRate || 0),
         selectedCarriers: currentSelection || [],
         carrierDetails: dealCarrierDetails
       });
@@ -1011,7 +1164,7 @@
         : 85;
       const saasFee = Number.isFinite(parseNumberValue(storedInputs && storedInputs.saasFee))
         ? parseNumberValue(storedInputs && storedInputs.saasFee)
-        : saasFeeForOrders(annualOrders);
+        : saasTierForOrders(annualOrders).fee;
       dealCarrierDetails = Array.isArray(data.carrier_details) ? data.carrier_details : [];
       dealCarrierDetailsPending = !!data.carrier_details_pending;
 
@@ -1082,8 +1235,30 @@
         saasFee,
         commentSold: toggleCommentSold.checked,
         ebay: toggleEbay.checked,
-        liveSelling: toggleLiveSelling.checked
+        liveSelling: toggleLiveSelling.checked,
+        printing: togglePrinting.checked
       });
+      const attachUploadName = dealAttachUpload && dealAttachUpload.files && dealAttachUpload.files.length
+        ? dealAttachUpload.files[0].name
+        : '';
+      fetch(`/api/deal-sizing-inputs/${jobId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          annual_orders: annualOrders,
+          avg_label_cost: Number(dealAvgLabelCost.value || 0),
+          per_label_fee: perLabelFee,
+          fee_order_pct: feeOrderPct,
+          attach_rate: attachRate,
+          saas_fee: saasFee,
+          comment_sold: toggleCommentSold.checked,
+          ebay: toggleEbay.checked,
+          live_selling: toggleLiveSelling.checked,
+          printing: togglePrinting.checked,
+          selected_carriers: currentSelection || [],
+          attach_upload_name: attachUploadName
+        })
+      }).catch(() => {});
       localStorage.setItem(dealSizeStorageKey, String(Number.isFinite(dealSize) ? dealSize : 0));
       const dealCard = document.querySelector('.metric-card--deal-sizing');
       if (dealCard) dealCard.classList.add('has-deal-size');

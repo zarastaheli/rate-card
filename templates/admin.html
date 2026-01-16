@@ -10,24 +10,44 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-  <div class="page-container entry-page">
-    <div class="card entry-card">
+  <div class="page-container admin-page">
+    <div class="card admin-card">
       <div class="card-content">
         <div class="card-body">
-          <div class="entry-title entry-title--bold">Admin</div>
-          <p class="subtitle">All input data captured from the flow</p>
+          <div class="admin-header">
+            <div>
+              <div class="entry-title entry-title--bold">Admin</div>
+              <p class="subtitle">All Input Data Captured From The Flow</p>
+            </div>
+            <div class="admin-header-actions">
+              <button class="button button-secondary" type="button" id="back-home">Back</button>
+              <button class="button button-secondary" type="button" id="clear-sheet">Clear Sheet</button>
+              <a class="button button-secondary" href="/admin/download">Download Spreadsheet</a>
+            </div>
+          </div>
 
           <div class="admin-tabs">
-            <button class="admin-tab is-active" type="button" data-tab="deal-tab">Deal sizing</button>
-            <button class="admin-tab" type="button" data-tab="rate-tab">Rate card + deal sizing</button>
+            <button class="admin-tab is-active" type="button" data-tab="deal-tab">Deal Sizing</button>
+            <button class="admin-tab" type="button" data-tab="rate-tab">Rate Card + Deal Sizing</button>
           </div>
 
           <div class="admin-table-wrapper" id="deal-tab">
             <table class="admin-table">
               <thead>
+                {% if deal_data.groups %}
+                <tr class="admin-group-row">
+                  {% for group in deal_data.groups %}
+                  <th class="admin-group-cell" colspan="{{ group.span }}">{{ group.label }}</th>
+                  {% endfor %}
+                </tr>
+                {% endif %}
                 <tr>
                   {% for header in (deal_data.headers if deal_data is defined else []) %}
-                  <th>{{ header }}</th>
+                  {% set header_text = header|string %}
+                  {% set is_json = 'JSON' in header_text %}
+                  {% set is_breakdown = 'Breakdown' in header_text %}
+                  {% set is_wrap = is_breakdown or header_text in ['Merchant Carriers', 'Merchant Service Levels', 'Redo Carriers'] %}
+                  <th class="{{ 'admin-table-total' if header == 'Total Deal Size' else '' }} {{ 'admin-col-json' if is_json else '' }} {{ 'admin-col-breakdown' if is_breakdown else '' }} {{ 'admin-col-wrap' if is_wrap else '' }}">{{ header }}</th>
                   {% endfor %}
                 </tr>
               </thead>
@@ -36,7 +56,18 @@
                   {% for row in deal_data.rows %}
                   <tr>
                     {% for cell in row %}
-                    <td>{{ cell }}</td>
+                    {% set header = deal_data.headers[loop.index0] if deal_data.headers is defined else '' %}
+                    {% set header_text = header|string %}
+                    {% set is_json = 'JSON' in header_text %}
+                    {% set is_breakdown = 'Breakdown' in header_text %}
+                    {% set is_wrap = is_breakdown or header_text in ['Merchant Carriers', 'Merchant Service Levels', 'Redo Carriers'] %}
+                    <td class="{{ 'admin-table-total' if header == 'Total Deal Size' else '' }} {{ 'admin-col-json' if is_json else '' }} {{ 'admin-col-breakdown' if is_breakdown else '' }} {{ 'admin-col-wrap' if is_wrap else '' }}">
+                      {% if cell is mapping and cell.href %}
+                        <a class="action-link-pill" href="{{ cell.href }}" target="_blank" rel="noopener noreferrer">{{ cell.label }}</a>
+                      {% else %}
+                        {{ cell }}
+                      {% endif %}
+                    </td>
                     {% endfor %}
                   </tr>
                   {% endfor %}
@@ -52,9 +83,20 @@
           <div class="admin-table-wrapper is-hidden" id="rate-tab">
             <table class="admin-table">
               <thead>
+                {% if rate_data.groups %}
+                <tr class="admin-group-row">
+                  {% for group in rate_data.groups %}
+                  <th class="admin-group-cell" colspan="{{ group.span }}">{{ group.label }}</th>
+                  {% endfor %}
+                </tr>
+                {% endif %}
                 <tr>
                   {% for header in (rate_data.headers if rate_data is defined else []) %}
-                  <th>{{ header }}</th>
+                  {% set header_text = header|string %}
+                  {% set is_json = 'JSON' in header_text %}
+                  {% set is_breakdown = 'Breakdown' in header_text %}
+                  {% set is_wrap = is_breakdown or header_text in ['Merchant Carriers', 'Merchant Service Levels', 'Redo Carriers'] %}
+                  <th class="{{ 'admin-table-total' if header == 'Total Deal Size' else '' }} {{ 'admin-col-json' if is_json else '' }} {{ 'admin-col-breakdown' if is_breakdown else '' }} {{ 'admin-col-wrap' if is_wrap else '' }}">{{ header }}</th>
                   {% endfor %}
                 </tr>
               </thead>
@@ -63,7 +105,18 @@
                   {% for row in rate_data.rows %}
                   <tr>
                     {% for cell in row %}
-                    <td>{{ cell }}</td>
+                    {% set header = rate_data.headers[loop.index0] if rate_data.headers is defined else '' %}
+                    {% set header_text = header|string %}
+                    {% set is_json = 'JSON' in header_text %}
+                    {% set is_breakdown = 'Breakdown' in header_text %}
+                    {% set is_wrap = is_breakdown or header_text in ['Merchant Carriers', 'Merchant Service Levels', 'Redo Carriers'] %}
+                    <td class="{{ 'admin-table-total' if header == 'Total Deal Size' else '' }} {{ 'admin-col-json' if is_json else '' }} {{ 'admin-col-breakdown' if is_breakdown else '' }} {{ 'admin-col-wrap' if is_wrap else '' }}">
+                      {% if cell is mapping and cell.href %}
+                        <a class="action-link-pill" href="{{ cell.href }}" target="_blank" rel="noopener noreferrer">{{ cell.label }}</a>
+                      {% else %}
+                        {{ cell }}
+                      {% endif %}
+                    </td>
                     {% endfor %}
                   </tr>
                   {% endfor %}
@@ -75,11 +128,18 @@
               </tbody>
             </table>
           </div>
-          <div class="button-row">
-            <button class="button button-secondary" type="button" id="back-home">Back</button>
-            <a class="button button-secondary" href="/admin/download">Download spreadsheet</a>
-          </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay is-hidden" id="clear-sheet-modal">
+    <div class="modal-card">
+      <div class="modal-title">Are You Sure You Want To Clear This Sheet?</div>
+      <div class="modal-subtitle" id="clear-sheet-name">Deal Sizing Sheet</div>
+      <div class="modal-actions">
+        <button class="button button-secondary" type="button" id="clear-sheet-cancel">Cancel</button>
+        <button class="button button-primary" type="button" id="clear-sheet-confirm">Confirm</button>
       </div>
     </div>
   </div>
@@ -88,6 +148,13 @@
     document.getElementById('back-home').addEventListener('click', () => {
       window.location.href = '/';
     });
+    const clearSheetBtn = document.getElementById('clear-sheet');
+    const clearModal = document.getElementById('clear-sheet-modal');
+    const clearModalName = document.getElementById('clear-sheet-name');
+    const clearConfirm = document.getElementById('clear-sheet-confirm');
+    const clearCancel = document.getElementById('clear-sheet-cancel');
+    const activeTabKey = 'admin_active_tab';
+
     document.querySelectorAll('.admin-tab').forEach((button) => {
       button.addEventListener('click', () => {
         document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.remove('is-active'));
@@ -95,7 +162,68 @@
         button.classList.add('is-active');
         const target = document.getElementById(button.dataset.tab);
         if (target) target.classList.remove('is-hidden');
+        localStorage.setItem(activeTabKey, button.dataset.tab || '');
       });
+    });
+
+    const savedTab = localStorage.getItem(activeTabKey);
+    if (savedTab) {
+      const tabBtn = document.querySelector(`.admin-tab[data-tab="${savedTab}"]`);
+      if (tabBtn) {
+        tabBtn.click();
+      }
+    }
+
+    function currentSheetInfo() {
+      const activeTab = document.querySelector('.admin-tab.is-active');
+      if (activeTab && activeTab.dataset.tab === 'rate-tab') {
+        return { key: 'rate', label: 'Rate Card + Deal Sizing Sheet' };
+      }
+      return { key: 'deal', label: 'Deal Sizing Sheet' };
+    }
+
+    function closeClearModal() {
+      clearModal.classList.add('is-hidden');
+    }
+
+    clearSheetBtn.addEventListener('click', () => {
+      const sheet = currentSheetInfo();
+      clearModalName.textContent = sheet.label;
+      clearConfirm.dataset.sheet = sheet.key;
+      clearModal.classList.remove('is-hidden');
+    });
+
+    clearCancel.addEventListener('click', closeClearModal);
+    clearModal.addEventListener('click', (event) => {
+      if (event.target === clearModal) {
+        closeClearModal();
+      }
+    });
+
+    clearConfirm.addEventListener('click', async () => {
+      const sheet = clearConfirm.dataset.sheet || 'deal';
+      try {
+        const response = await fetch('/api/admin/clear', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sheet })
+        });
+        let data = {};
+        try {
+          data = await response.json();
+        } catch (err) {
+          data = {};
+        }
+        if (!response.ok || data.error) {
+          const message = data.error || 'Unable to clear sheet. Please try again.';
+          alert(message);
+          return;
+        }
+        closeClearModal();
+        window.location.reload();
+      } catch (err) {
+        alert('Unable to clear sheet. Please try again.');
+      }
     });
   </script>
 </body>

@@ -98,6 +98,10 @@
           <input type="checkbox" id="existing-customer" />
           <label class="field-label-inline" for="existing-customer">Existing customer</label>
         </div>
+        <div class="form-field" style="margin-top: 16px;">
+          <label class="field-label" for="se-ae-on-deal">SE/AE On Deal</label>
+          <input type="text" class="text-input" id="se-ae-on-deal" placeholder="Enter SE/AE on deal" />
+        </div>
         <div class="form-field" id="annual-orders-field" style="display: none; margin-top: 16px;">
           <label class="field-label" for="annual-orders">Annual orders</label>
           <input type="number" class="text-input" id="annual-orders" placeholder="Enter annual orders" min="0" />
@@ -139,6 +143,7 @@
     const replaceFileBtn = document.getElementById('replace-file-btn');
     const merchantInfoSection = document.getElementById('merchant-info-section');
     const merchantNameInput = document.getElementById('merchant-name');
+    const seAeOnDealInput = document.getElementById('se-ae-on-deal');
     const merchantIdField = document.getElementById('merchant-id-field');
     const merchantIdInput = document.getElementById('merchant-id');
     const existingCustomerCheckbox = document.getElementById('existing-customer');
@@ -221,8 +226,11 @@
       uniuniEligibleIndicator.classList.remove('is-eligible', 'is-ineligible');
       localStorage.removeItem('merchant_name');
       localStorage.removeItem('merchant_id');
+      localStorage.removeItem('se_ae_on_deal');
       localStorage.removeItem('origin_zip');
       localStorage.removeItem('annual_orders');
+      localStorage.removeItem('amazon_eligible');
+      localStorage.removeItem('uniuni_eligible');
 
       uploadedFileName.textContent = file.name;
       uploadDefault.style.display = 'none';
@@ -361,15 +369,18 @@
             amazonEligibleIndicator.textContent = '✕';
             amazonEligibleIndicator.classList.remove('is-eligible');
             amazonEligibleIndicator.classList.add('is-ineligible');
+            localStorage.setItem('amazon_eligible', 'false');
             return;
           }
           amazonEligibleIndicator.textContent = data.eligible ? '✓' : '✕';
           amazonEligibleIndicator.classList.toggle('is-eligible', !!data.eligible);
           amazonEligibleIndicator.classList.toggle('is-ineligible', !data.eligible);
+          localStorage.setItem('amazon_eligible', data.eligible ? 'true' : 'false');
         } catch (e) {
           amazonEligibleIndicator.textContent = '✕';
           amazonEligibleIndicator.classList.remove('is-eligible');
           amazonEligibleIndicator.classList.add('is-ineligible');
+          localStorage.setItem('amazon_eligible', 'false');
         }
         try {
           uniuniEligibilityField.style.display = 'block';
@@ -383,15 +394,18 @@
             uniuniEligibleIndicator.textContent = '✕';
             uniuniEligibleIndicator.classList.remove('is-eligible');
             uniuniEligibleIndicator.classList.add('is-ineligible');
+            localStorage.setItem('uniuni_eligible', 'false');
             return;
           }
           uniuniEligibleIndicator.textContent = data.eligible ? '✓' : '✕';
           uniuniEligibleIndicator.classList.toggle('is-eligible', !!data.eligible);
           uniuniEligibleIndicator.classList.toggle('is-ineligible', !data.eligible);
+          localStorage.setItem('uniuni_eligible', data.eligible ? 'true' : 'false');
         } catch (e) {
           uniuniEligibleIndicator.textContent = '✕';
           uniuniEligibleIndicator.classList.remove('is-eligible');
           uniuniEligibleIndicator.classList.add('is-ineligible');
+          localStorage.setItem('uniuni_eligible', 'false');
         }
       }, 300);
     });
@@ -401,12 +415,14 @@
 
       const merchantName = merchantNameInput.value.trim();
       const merchantId = existingCustomerCheckbox.checked ? merchantIdInput.value.trim() : null;
+      const seAeOnDeal = seAeOnDealInput.value.trim();
       const originZip = originZipInput.value.trim();
       const annualOrders = annualOrdersInput.value.trim();
 
       // Save to localStorage
       localStorage.setItem('merchant_name', merchantName);
       if (merchantId) localStorage.setItem('merchant_id', merchantId);
+      if (seAeOnDeal) localStorage.setItem('se_ae_on_deal', seAeOnDeal);
       if (originZip) localStorage.setItem('origin_zip', originZip);
       if (annualOrders) localStorage.setItem('annual_orders', annualOrders);
 
@@ -420,10 +436,13 @@
       localStorage.removeItem('merchant_name_suggestion');
       localStorage.removeItem('merchant_name');
       localStorage.removeItem('merchant_id');
+      localStorage.removeItem('se_ae_on_deal');
       localStorage.removeItem('origin_zip');
       localStorage.removeItem('annual_orders');
       localStorage.removeItem('flow_type');
       localStorage.removeItem('uploaded_file_name');
+      localStorage.removeItem('amazon_eligible');
+      localStorage.removeItem('uniuni_eligible');
       window.location.href = '/';
     });
 
@@ -437,6 +456,7 @@
       const storedOriginZip = localStorage.getItem('origin_zip');
       const storedAnnualOrders = localStorage.getItem('annual_orders');
       const storedFileName = localStorage.getItem('uploaded_file_name');
+      const storedSeAeOnDeal = localStorage.getItem('se_ae_on_deal');
 
       uploadedFileName.textContent = storedFileName || 'Invoice uploaded';
       uploadDefault.style.display = 'none';
@@ -452,6 +472,7 @@
 
       merchantNameInput.value = storedMerchantName || localStorage.getItem('merchant_name_suggestion') || '';
       merchantIdInput.value = storedMerchantId || '';
+      seAeOnDealInput.value = storedSeAeOnDeal || '';
       existingCustomerCheckbox.checked = !!storedMerchantId;
       merchantIdField.style.display = existingCustomerCheckbox.checked ? 'block' : 'none';
       originZipInput.value = storedOriginZip || '';

@@ -1942,32 +1942,77 @@ def clean_old_runs():
                 pass
 
 ADMIN_LOG_PATH = BASE_DIR / 'admin_log.xlsx'
+DEAL_SIZING_HEADERS = [
+    'Merchant Name',
+    'SE/AE On Deal',
+    'Annual Orders',
+    '% USPS',
+    '% FedEx',
+    '% UPS',
+    '% Amazon',
+    '% UniUni',
+    'UPS Average Label Cost',
+    'FedEx Actual Spread',
+    'Amazon Actual Spread',
+    'UniUni Actual Spread',
+    'Carrier Spread',
+    'Adjusted Annual Orders',
+    'Attach Rate',
+    'SaaS Fee',
+    'SaaS Tier',
+    'Per Label Fee',
+    '% Of Orders With Fee',
+    'CommentSold',
+    'Ebay',
+    'Ebay Live Selling',
+    'Printing Today',
+    'Total Deal Size'
+]
+RATE_CARD_HEADERS = [
+    'Timestamp',
+    'Job ID',
+    'Flow Type',
+    'Merchant Name',
+    'Merchant ID',
+    'Existing Customer',
+    'Origin ZIP',
+    'Annual Orders',
+    'Structure',
+    'Zone Column',
+    'Mapping JSON',
+    'Merchant Pricing JSON',
+    'Redo Carriers JSON',
+    'USPS Market % Off',
+    'USPS Market $ Off'
+]
 
 def _ensure_admin_log():
-    if ADMIN_LOG_PATH.exists():
+    if not ADMIN_LOG_PATH.exists():
+        wb = openpyxl.Workbook()
+        default_sheet = wb.active
+        wb.remove(default_sheet)
+        ws = wb.create_sheet('Deal sizing')
+        ws.append(DEAL_SIZING_HEADERS)
+        ws = wb.create_sheet('Rate card + deal sizing')
+        ws.append(RATE_CARD_HEADERS)
+        wb.save(ADMIN_LOG_PATH)
         return
-    wb = openpyxl.Workbook()
-    default_sheet = wb.active
-    wb.remove(default_sheet)
-    for title in ('Deal sizing', 'Rate card + deal sizing'):
-        ws = wb.create_sheet(title)
-        ws.append([
-            'Timestamp',
-            'Job ID',
-            'Flow Type',
-            'Merchant Name',
-            'Merchant ID',
-            'Existing Customer',
-            'Origin ZIP',
-            'Annual Orders',
-            'Structure',
-            'Zone Column',
-            'Mapping JSON',
-            'Merchant Pricing JSON',
-            'Redo Carriers JSON',
-            'USPS Market % Off',
-            'USPS Market $ Off'
-        ])
+
+    wb = openpyxl.load_workbook(ADMIN_LOG_PATH)
+    if 'Deal sizing' not in wb.sheetnames:
+        ws = wb.create_sheet('Deal sizing')
+        ws.append(DEAL_SIZING_HEADERS)
+    else:
+        ws = wb['Deal sizing']
+        for idx, header in enumerate(DEAL_SIZING_HEADERS, start=1):
+            ws.cell(row=1, column=idx, value=header)
+    if 'Rate card + deal sizing' not in wb.sheetnames:
+        ws = wb.create_sheet('Rate card + deal sizing')
+        ws.append(RATE_CARD_HEADERS)
+    else:
+        ws = wb['Rate card + deal sizing']
+        for idx, header in enumerate(RATE_CARD_HEADERS, start=1):
+            ws.cell(row=1, column=idx, value=header)
     wb.save(ADMIN_LOG_PATH)
 
 def _upsert_admin_row(ws, job_id, row_values):
@@ -1981,6 +2026,8 @@ def _upsert_admin_row(ws, job_id, row_values):
 def log_admin_entry(job_id, mapping_config, merchant_pricing, redo_config):
     _ensure_admin_log()
     flow_type = mapping_config.get('flow_type', 'rate_card_plus_deal_sizing') if mapping_config else ''
+    if flow_type == 'deal_sizing':
+        return
     sheet_name = 'Deal sizing' if flow_type == 'deal_sizing' else 'Rate card + deal sizing'
     pct_off, dollar_off = _usps_market_discount_values(mapping_config)
     row = [
@@ -2037,6 +2084,634 @@ def admin_page():
 
     deal_data = _sheet_data(deal_ws)
     rate_data = _sheet_data(rate_ws)
+
+    def _format_currency(value):
+        try:
+            number = float(value)
+        except Exception:
+            return ''
+        return f"${number:,.0f}"
+
+    def _format_percent(value):
+        try:
+            number = float(value)
+        except Exception:
+            return ''
+        if number <= 1:
+            number *= 100
+        return f"{number:.0f}%"
+
+    def _format_number(value):
+        try:
+            number = float(value)
+        except Exception:
+            return ''
+        return f"{number:,.0f}"
+
+    def _format_bool(value):
+        return 'Yes' if value else 'No'
+
+    def _parse_bool(value):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {'true', '1', 'yes', 'y'}
+
+    def _parse_number(value):
+        try:
+            return float(value)
+        except Exception:
+            return 0.0
+
+    def _saas_tier_name(annual_orders):
+        try:
+            orders = float(annual_orders)
+        except Exception:
+            orders = 0
+        if orders <= 0:
+            return ''
+        if orders < 5000:
+            return 'Starter Tier'
+        if orders < 15000:
+            return 'Growth Tier'
+        if orders < 35000:
+            return 'Pro Tier'
+        if orders < 50000:
+            return 'Scale Tier'
+        return 'Enterprise Tier'
+
+    def _summarize_list(values):
+        items = [str(value).strip() for value in (values or []) if value]
+        return ', '.join(items)
+
+    def _effective_orders(annual_orders, comment_sold, ebay, live_selling):
+        adjusted = annual_orders
+        if comment_sold:
+            adjusted *= 0.6
+        if ebay:
+            adjusted *= 0.6 if live_selling else 0.95
+        return adjusted
+
+    def _deal_spread_from_details(details, effective_orders):
+        total = 0.0
+        for detail in (details or []):
+            spread = _parse_number(detail.get('spread'))
+            pct = detail.get('orders_won_pct')
+            pct = _parse_number(pct)
+            if pct > 1:
+                pct /= 100
+            total += spread * pct * effective_orders
+        return total
+
+    def _reorder_with_total(data, download_label='Download Rate Card'):
+        headers = list(data.get('headers') or [])
+        rows = list(data.get('rows') or [])
+        if not headers:
+            return data
+        total_label = 'Total Deal Size'
+        total_index = None
+        if 'Total Size' in headers:
+            total_index = headers.index('Total Size')
+        elif total_label in headers:
+            total_index = headers.index(total_label)
+        if total_index is not None:
+            headers = headers[:total_index] + headers[total_index + 1:] + [total_label]
+            updated = []
+            for row in rows:
+                total_value = row[total_index] if total_index < len(row) else ''
+                new_row = []
+                for header in headers:
+                    if header == total_label:
+                        new_row.append(total_value)
+                        continue
+                    try:
+                        idx = data['headers'].index(header)
+                    except ValueError:
+                        new_row.append('')
+                        continue
+                    new_row.append(row[idx] if idx < len(row) else '')
+                updated.append(new_row)
+            data['headers'] = headers
+            data['rows'] = updated
+        else:
+            if total_label not in headers:
+                headers.append(total_label)
+                rows = [list(row) + [''] for row in rows]
+                data['headers'] = headers
+                data['rows'] = rows
+        if download_label in headers and headers[-1] != total_label:
+            download_idx = headers.index(download_label)
+            headers.pop(download_idx)
+            headers.insert(len(headers) - 1, download_label)
+            updated = []
+            for row in data.get('rows', []):
+                values = list(row)
+                value = values.pop(download_idx) if download_idx < len(values) else ''
+                values.insert(len(values) - 1, value)
+                updated.append(values)
+            data['headers'] = headers
+            data['rows'] = updated
+        return data
+
+    def _build_admin_groups(headers, sheet_type):
+        def group_label(header):
+            header = str(header or '')
+            if sheet_type == 'deal':
+                if header in ('Merchant Name', 'SE/AE On Deal', 'Annual Orders'):
+                    return 'Merchant Info'
+                if header.startswith('% '):
+                    return 'Carrier Mix'
+                if header in (
+                    'UPS Average Label Cost',
+                    'FedEx Actual Spread',
+                    'Amazon Actual Spread',
+                    'UniUni Actual Spread'
+                ):
+                    return 'Carrier Inputs'
+                if header in (
+                    'Carrier Spread',
+                    'Adjusted Annual Orders',
+                    'Attach Rate',
+                    'SaaS Fee',
+                    'SaaS Tier',
+                    'Per Label Fee',
+                    '% Of Orders With Fee',
+                    'CommentSold',
+                    'Ebay',
+                    'Ebay Live Selling',
+                    'Printing Today'
+                ):
+                    return 'Deal Sizing Inputs'
+                if header == 'Total Deal Size':
+                    return 'Deal Sizes'
+                return 'Other'
+            if sheet_type == 'rate':
+                if header in (
+                    'Timestamp',
+                    'Merchant Name',
+                    'Existing Customer',
+                    'Merchant ID',
+                    'SE/AE On Deal',
+                    'Origin ZIP',
+                    'Annual Orders',
+                    'Structure',
+                    'Raw Invoice File',
+                    'Amazon Eligible',
+                    'UniUni Eligible'
+                ):
+                    return 'Merchant Info'
+                if header.endswith('Mapped To'):
+                    return 'Mappings'
+                if header in ('Merchant Carriers', 'Merchant Service Levels'):
+                    return 'Merchant Pricing'
+                if header == 'Redo Carriers':
+                    return 'Redo Carriers'
+                if header in (
+                    'Est. Merchant Annual Savings',
+                    'Total Spread Available',
+                    '% Orders We Could Win',
+                    '% Orders Won W/ Spread'
+                ):
+                    return 'Dashboard Figures'
+                if header.endswith('Breakdown'):
+                    return 'Carrier Breakdown'
+                if header in ('% Off USPS Market Rate', '$ Off USPS Market Rate'):
+                    return 'Pricing Inputs'
+                if header in (
+                    'Est. Redo Deal Size (Popup)',
+                    'Carrier Spread',
+                    'Adjusted Annual Orders',
+                    'Attach Rate',
+                    'File Attached',
+                    'SaaS Fee',
+                    'Per Label Fee',
+                    '% Of Orders With Fee',
+                    'Annual Orders (Deal Sizing)',
+                    'Average Label Cost',
+                    'CommentSold',
+                    'Ebay',
+                    'Live Selling',
+                    'Printing Today'
+                ):
+                    return 'Deal Sizing Inputs'
+                if header in ('Download Rate Card', 'View File In Sharepoint'):
+                    return 'Files'
+                return 'Other'
+            return 'Other'
+
+        groups = []
+        if not headers:
+            return groups
+        current = group_label(headers[0])
+        start = 0
+        for idx, header in enumerate(headers):
+            label = group_label(header)
+            if label != current:
+                groups.append({'label': current, 'span': idx - start})
+                current = label
+                start = idx
+        groups.append({'label': current, 'span': len(headers) - start})
+        return groups
+
+    def _format_breakdown(metrics):
+        if not metrics:
+            return ''
+        savings = _format_currency(metrics.get('Est. Merchant Annual Savings'))
+        deal_size = _format_currency(metrics.get('Est. Redo Deal Size'))
+        spread = _format_currency(metrics.get('Spread Available'))
+        could_win = _format_percent(metrics.get('% Orders We Could Win'))
+        won_spread = _format_percent(metrics.get('% Orders Won W/ Spread'))
+        return f"Savings: {savings} | Deal Size: {deal_size} | Total Spread: {spread} | % We Could Win: {could_win} | % Won W/ Spread: {won_spread}"
+
+    def _available_carriers_for_job(job_dir, mapping_config, excluded):
+        raw_csv = job_dir / 'raw_invoice.csv'
+        if raw_csv.exists() and mapping_config:
+            try:
+                raw_df = pd.read_csv(raw_csv)
+                available = available_merchant_carriers(raw_df, mapping_config)
+                if available:
+                    return [c for c in available if c not in excluded]
+            except Exception:
+                pass
+        return [c for c in MERCHANT_CARRIERS if c not in excluded]
+
+    def _deal_inputs_from_mapping(mapping_config):
+        inputs = mapping_config.get('deal_sizing_inputs') if mapping_config else None
+        return inputs if isinstance(inputs, dict) else {}
+
+    def _build_deal_sizing_view(data):
+        headers = data.get('headers') or []
+        rows = data.get('rows') or []
+        header_index = {str(header): idx for idx, header in enumerate(headers)}
+
+        def value_for(row, *keys):
+            for key in keys:
+                idx = header_index.get(key)
+                if idx is not None and idx < len(row):
+                    return row[idx]
+            return ''
+
+        target_headers = [
+            'Merchant Name',
+            'SE/AE On Deal',
+            'Annual Orders',
+            '% USPS',
+            '% FedEx',
+            '% UPS',
+            '% Amazon',
+            '% UniUni',
+            'UPS Average Label Cost',
+            'FedEx Actual Spread',
+            'Amazon Actual Spread',
+            'UniUni Actual Spread',
+            'Carrier Spread',
+            'Adjusted Annual Orders',
+            'Attach Rate',
+            'SaaS Fee',
+            'SaaS Tier',
+            'Per Label Fee',
+            '% Of Orders With Fee',
+            'CommentSold',
+            'Ebay',
+            'Ebay Live Selling',
+            'Printing Today',
+            'Total Deal Size'
+        ]
+
+        updated_rows = []
+        for row in rows:
+            merchant_name = value_for(row, 'Merchant Name', 'Merchant')
+            se_ae_on_deal = value_for(row, 'SE/AE On Deal')
+            annual_orders = value_for(row, 'Annual Orders')
+            pct_usps = value_for(row, '% USPS')
+            pct_fedex = value_for(row, '% FedEx')
+            pct_ups = value_for(row, '% UPS')
+            pct_amazon = value_for(row, '% Amazon')
+            pct_uniuni = value_for(row, '% UniUni')
+            ups_avg_label = value_for(row, 'UPS Average Label Cost')
+            fedex_spread = value_for(row, 'FedEx Actual Spread')
+            amazon_spread = value_for(row, 'Amazon Actual Spread')
+            uniuni_spread = value_for(row, 'UniUni Actual Spread')
+            attach_rate = value_for(row, 'Attach Rate')
+            saas_fee = value_for(row, 'SaaS Fee', 'Monthly SaaS')
+            per_label_fee = value_for(row, 'Per Label Fee')
+            fee_order_pct = value_for(row, '% Of Orders With Fee')
+            comment_sold = value_for(row, 'CommentSold', 'CommentSold?')
+            ebay = value_for(row, 'Ebay')
+            live_selling = value_for(row, 'Ebay Live Selling', 'Live Selling')
+            printing = value_for(row, 'Printing Today', 'Printing?')
+            total_deal_size = value_for(row, 'Total Deal Size', 'Total Size')
+
+            usps_size = _parse_number(value_for(row, 'USPS Size'))
+            fedex_size = _parse_number(value_for(row, 'FedEx Size'))
+            ups_size = _parse_number(value_for(row, 'UPS Size'))
+            amazon_size = _parse_number(value_for(row, 'Amazon Size'))
+            uniuni_size = _parse_number(value_for(row, 'UniUni Size'))
+            carrier_spread = usps_size + fedex_size + ups_size + amazon_size + uniuni_size
+            carrier_spread_value = carrier_spread if carrier_spread else value_for(row, 'Carrier Spread')
+
+            annual_orders_value = _parse_number(annual_orders)
+            comment_sold_flag = _parse_bool(comment_sold)
+            ebay_flag = _parse_bool(ebay)
+            live_flag = _parse_bool(live_selling)
+            adjusted_orders = _effective_orders(annual_orders_value, comment_sold_flag, ebay_flag, live_flag)
+            adjusted_orders_value = adjusted_orders if adjusted_orders else value_for(row, 'Adjusted Annual Orders')
+
+            updated_rows.append([
+                merchant_name,
+                se_ae_on_deal,
+                annual_orders,
+                pct_usps,
+                pct_fedex,
+                pct_ups,
+                pct_amazon,
+                pct_uniuni,
+                ups_avg_label,
+                fedex_spread,
+                amazon_spread,
+                uniuni_spread,
+                carrier_spread_value,
+                adjusted_orders_value,
+                attach_rate,
+                saas_fee,
+                _saas_tier_name(annual_orders_value),
+                per_label_fee,
+                fee_order_pct,
+                _format_bool(comment_sold_flag) if comment_sold != '' else '',
+                _format_bool(ebay_flag) if ebay != '' else '',
+                _format_bool(live_flag) if live_selling != '' else '',
+                _format_bool(_parse_bool(printing)) if printing != '' else '',
+                total_deal_size
+            ])
+
+        return {'headers': target_headers, 'rows': updated_rows}
+    if rate_data.get('headers'):
+        headers = rate_data['headers']
+        header_index = {str(header): idx for idx, header in enumerate(headers)}
+        job_idx = header_index.get('Job ID')
+        ts_idx = header_index.get('Timestamp')
+        merchant_name_idx = header_index.get('Merchant Name')
+        merchant_id_idx = header_index.get('Merchant ID')
+        existing_idx = header_index.get('Existing Customer')
+        origin_idx = header_index.get('Origin ZIP')
+        annual_idx = header_index.get('Annual Orders')
+        structure_idx = header_index.get('Structure')
+        mapping_idx = header_index.get('Mapping JSON')
+        pricing_idx = header_index.get('Merchant Pricing JSON')
+        redo_idx = header_index.get('Redo Carriers JSON')
+        pct_off_idx = header_index.get('USPS Market % Off')
+        dollar_off_idx = header_index.get('USPS Market $ Off')
+
+        standard_fields = STANDARD_FIELDS['required'] + STANDARD_FIELDS['optional']
+        mapping_headers = [f'{field} Mapped To' for field in standard_fields]
+        breakdown_headers = [f'{carrier} Breakdown' for carrier in DASHBOARD_CARRIERS]
+
+        rate_headers = [
+            'Timestamp',
+            'Merchant Name',
+            'Existing Customer',
+            'Merchant ID',
+            'SE/AE On Deal',
+            'Origin ZIP',
+            'Annual Orders',
+            'Structure',
+            'Raw Invoice File',
+            'Amazon Eligible',
+            'UniUni Eligible'
+        ] + mapping_headers + [
+            'Merchant Carriers',
+            'Merchant Service Levels',
+            'Redo Carriers',
+            'Est. Merchant Annual Savings',
+            'Total Spread Available',
+            '% Orders We Could Win',
+            '% Orders Won W/ Spread'
+        ] + breakdown_headers + [
+            '% Off USPS Market Rate',
+            '$ Off USPS Market Rate',
+            'Est. Redo Deal Size (Popup)',
+            'Carrier Spread',
+            'Adjusted Annual Orders',
+            'Attach Rate',
+            'File Attached',
+            'SaaS Fee',
+            'Per Label Fee',
+            '% Of Orders With Fee',
+            'Annual Orders (Deal Sizing)',
+            'Average Label Cost',
+            'CommentSold',
+            'Ebay',
+            'Live Selling',
+            'Printing Today',
+            'Download Rate Card',
+            'View File In Sharepoint'
+        ]
+
+        rate_rows = []
+        for row in rate_data.get('rows', []):
+            job_id = row[job_idx] if job_idx is not None and job_idx < len(row) else ''
+            timestamp = row[ts_idx] if ts_idx is not None and ts_idx < len(row) else ''
+            job_dir = Path(app.config['UPLOAD_FOLDER']) / str(job_id)
+            mapping_config = {}
+            merchant_pricing = {}
+            redo_config = {}
+            if job_id and job_dir.exists():
+                mapping_file = job_dir / 'mapping.json'
+                if mapping_file.exists():
+                    try:
+                        with open(mapping_file, 'r') as f:
+                            mapping_config = json.load(f)
+                    except Exception:
+                        mapping_config = {}
+                pricing_file = job_dir / 'merchant_pricing.json'
+                if pricing_file.exists():
+                    try:
+                        with open(pricing_file, 'r') as f:
+                            merchant_pricing = json.load(f)
+                    except Exception:
+                        merchant_pricing = {}
+                redo_file = job_dir / 'redo_carriers.json'
+                if redo_file.exists():
+                    try:
+                        with open(redo_file, 'r') as f:
+                            redo_config = json.load(f)
+                    except Exception:
+                        redo_config = {}
+
+            mapping_json = row[mapping_idx] if mapping_idx is not None and mapping_idx < len(row) else None
+            pricing_json = row[pricing_idx] if pricing_idx is not None and pricing_idx < len(row) else None
+            redo_json = row[redo_idx] if redo_idx is not None and redo_idx < len(row) else None
+            if not mapping_config and mapping_json:
+                try:
+                    mapping_config = json.loads(mapping_json)
+                except Exception:
+                    mapping_config = {}
+            if not merchant_pricing and pricing_json:
+                try:
+                    merchant_pricing = json.loads(pricing_json)
+                except Exception:
+                    merchant_pricing = {}
+            if not redo_config and redo_json:
+                try:
+                    redo_config = json.loads(redo_json)
+                except Exception:
+                    redo_config = {}
+
+            merchant_name = mapping_config.get('merchant_name') or (
+                row[merchant_name_idx] if merchant_name_idx is not None and merchant_name_idx < len(row) else ''
+            )
+            merchant_id = mapping_config.get('merchant_id') or (
+                row[merchant_id_idx] if merchant_id_idx is not None and merchant_id_idx < len(row) else ''
+            )
+            existing_customer = mapping_config.get('existing_customer')
+            if existing_customer is None and existing_idx is not None and existing_idx < len(row):
+                existing_customer = row[existing_idx]
+            origin_zip = mapping_config.get('origin_zip') or (
+                row[origin_idx] if origin_idx is not None and origin_idx < len(row) else ''
+            )
+            annual_orders = mapping_config.get('annual_orders') or (
+                row[annual_idx] if annual_idx is not None and annual_idx < len(row) else ''
+            )
+            structure = mapping_config.get('structure') or (
+                row[structure_idx] if structure_idx is not None and structure_idx < len(row) else ''
+            )
+            se_ae_on_deal = mapping_config.get('se_ae_on_deal', '')
+            raw_invoice_file = mapping_config.get('raw_invoice_file', '')
+            raw_invoice_cell = {
+                'href': f'/download/{job_id}/raw-invoice',
+                'label': raw_invoice_file or 'Download'
+            } if job_id else ''
+
+            eligibility = None
+            try:
+                eligibility = compute_eligibility(origin_zip, annual_orders, mapping_config=mapping_config)
+            except Exception:
+                eligibility = None
+            amazon_eligible = mapping_config.get('amazon_eligible')
+            uniuni_eligible = mapping_config.get('uniuni_eligible')
+            if amazon_eligible is None and eligibility:
+                amazon_eligible = eligibility.get('amazon_eligible_final')
+            if uniuni_eligible is None and eligibility:
+                uniuni_eligible = eligibility.get('uniuni_eligible_final')
+
+            mapped_values = mapping_config.get('mapping', {}) if mapping_config else {}
+            mapped_columns = [mapped_values.get(field, '') for field in standard_fields]
+
+            excluded_carriers = merchant_pricing.get('excluded_carriers', []) if merchant_pricing else []
+            merchant_carriers = _summarize_list(_available_carriers_for_job(job_dir, mapping_config, excluded_carriers)) if job_id else ''
+            merchant_services = _summarize_list(merchant_pricing.get('included_services', []) if merchant_pricing else [])
+            redo_carriers = _summarize_list(redo_config.get('selected_carriers', []) if redo_config else [])
+
+            pct_off = row[pct_off_idx] if pct_off_idx is not None and pct_off_idx < len(row) else ''
+            dollar_off = row[dollar_off_idx] if dollar_off_idx is not None and dollar_off_idx < len(row) else ''
+
+            selected_carriers = redo_config.get('selected_carriers', []) if redo_config else []
+            selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in selected_carriers] or list(DASHBOARD_CARRIERS)
+
+            summary_metrics = {}
+            breakdown_metrics = {}
+            if job_id and job_dir.exists():
+                rate_cards = list(job_dir.glob('* - Rate Card.xlsx'))
+                if rate_cards:
+                    try:
+                        summary_metrics = _calculate_metrics(job_dir, selected_dashboard)
+                    except Exception:
+                        summary_metrics = {}
+                    try:
+                        selections = {carrier: [carrier] for carrier in DASHBOARD_CARRIERS}
+                        breakdown_metrics = _calculate_metrics_batch(job_dir, selections)
+                    except Exception:
+                        breakdown_metrics = {}
+
+            breakdown_cells = []
+            for carrier in DASHBOARD_CARRIERS:
+                breakdown_cells.append(_format_breakdown(breakdown_metrics.get(carrier, {})))
+
+            deal_inputs = _deal_inputs_from_mapping(mapping_config)
+            deal_annual_orders = _parse_number(deal_inputs.get('annual_orders') or 0)
+            deal_avg_label_cost = _parse_number(deal_inputs.get('avg_label_cost') or 0)
+            deal_per_label_fee = _parse_number(deal_inputs.get('per_label_fee') or 0)
+            deal_fee_order_pct = _parse_number(deal_inputs.get('fee_order_pct') or 0)
+            if deal_fee_order_pct > 1:
+                deal_fee_order_pct /= 100
+            deal_attach_rate = _parse_number(deal_inputs.get('attach_rate') or 0)
+            deal_saas_fee = _parse_number(deal_inputs.get('saas_fee') or 0)
+            deal_comment_sold = _parse_bool(deal_inputs.get('comment_sold'))
+            deal_ebay = _parse_bool(deal_inputs.get('ebay'))
+            deal_live_selling = _parse_bool(deal_inputs.get('live_selling'))
+            deal_printing = _parse_bool(deal_inputs.get('printing'))
+            deal_attach_upload = deal_inputs.get('attach_upload_name')
+
+            adjusted_orders = _effective_orders(deal_annual_orders, deal_comment_sold, deal_ebay, deal_live_selling)
+            effective_orders = adjusted_orders * (deal_attach_rate / 100) if deal_attach_rate else adjusted_orders
+            carrier_spread_total = 0.0
+            if job_id and job_dir.exists() and selected_dashboard:
+                try:
+                    details = _calculate_carrier_details_fast(job_dir, selected_dashboard, mapping_config)
+                    carrier_spread_total = _deal_spread_from_details(list(details.values()), effective_orders)
+                except Exception:
+                    carrier_spread_total = 0.0
+            label_fee_total = deal_per_label_fee * deal_fee_order_pct * deal_annual_orders
+            popup_deal_size = carrier_spread_total + deal_saas_fee + label_fee_total
+
+            file_attached = 'Yes' if (deal_attach_rate > 85 and deal_attach_upload) else ('No' if deal_attach_rate > 85 else '')
+
+            download_cell = {
+                'href': f'/download/{job_id}/rate-card',
+                'label': 'Download'
+            } if job_id else ''
+            sharepoint_cell = {
+                'href': 'https://redotechinc.sharepoint.com/sites/Redo/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FRedo%2FShared%20Documents%2FAll%20Rate%20Cards%2FUpdating&viewid=90e9a3fe%2Df7a4%2D42c6%2Da353%2D200c53d2e4f3&view=7',
+                'label': 'View'
+            }
+
+            rate_rows.append([
+                timestamp,
+                merchant_name,
+                _format_bool(_parse_bool(existing_customer)),
+                merchant_id,
+                se_ae_on_deal,
+                origin_zip,
+                annual_orders,
+                structure,
+                raw_invoice_cell,
+                _format_bool(_parse_bool(amazon_eligible)) if amazon_eligible is not None else '',
+                _format_bool(_parse_bool(uniuni_eligible)) if uniuni_eligible is not None else '',
+                *mapped_columns,
+                merchant_carriers,
+                merchant_services,
+                redo_carriers,
+                _format_currency(summary_metrics.get('Est. Merchant Annual Savings')),
+                _format_currency(summary_metrics.get('Spread Available')),
+                _format_percent(summary_metrics.get('% Orders We Could Win')),
+                _format_percent(summary_metrics.get('% Orders Won W/ Spread')),
+                *breakdown_cells,
+                pct_off,
+                dollar_off,
+                _format_currency(popup_deal_size),
+                _format_currency(carrier_spread_total),
+                _format_number(adjusted_orders),
+                _format_percent(deal_attach_rate),
+                file_attached,
+                _format_currency(deal_saas_fee),
+                _format_currency(deal_per_label_fee),
+                _format_percent(deal_fee_order_pct),
+                _format_number(deal_annual_orders),
+                _format_currency(deal_avg_label_cost),
+                _format_bool(deal_comment_sold),
+                _format_bool(deal_ebay),
+                _format_bool(deal_live_selling),
+                _format_bool(deal_printing),
+                download_cell,
+                sharepoint_cell
+            ])
+
+        rate_data = {'headers': rate_headers, 'rows': rate_rows}
+        rate_data['groups'] = _build_admin_groups(rate_data.get('headers') or [], 'rate')
+
+    deal_data = _build_deal_sizing_view(deal_data)
+    deal_data['groups'] = _build_admin_groups(deal_data.get('headers') or [], 'deal')
     wb.close()
     return render_template('admin.html', deal_data=deal_data, rate_data=rate_data)
 
@@ -2044,6 +2719,125 @@ def admin_page():
 def admin_download():
     _ensure_admin_log()
     return send_file(ADMIN_LOG_PATH, as_attachment=True)
+
+@app.route('/api/admin/clear', methods=['POST'])
+def admin_clear():
+    payload = request.get_json(silent=True) or {}
+    sheet_key = (payload.get('sheet') or '').strip().lower()
+    sheet_name = 'Deal sizing' if sheet_key == 'deal' else 'Rate card + deal sizing'
+    _ensure_admin_log()
+    wb = openpyxl.load_workbook(ADMIN_LOG_PATH)
+    if sheet_name not in wb.sheetnames:
+        wb.close()
+        return jsonify({'error': 'Sheet not found'}), 404
+    ws = wb[sheet_name]
+    if ws.max_row and ws.max_row > 1:
+        ws.delete_rows(2, ws.max_row)
+    wb.save(ADMIN_LOG_PATH)
+    wb.close()
+    return jsonify({'success': True})
+
+@app.route('/api/deal-sizing-inputs/<job_id>', methods=['POST'])
+def save_deal_sizing_inputs(job_id):
+    payload = request.get_json(silent=True) or {}
+    job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+    if not job_dir.exists():
+        return jsonify({'error': 'Job not found'}), 404
+    mapping_file = job_dir / 'mapping.json'
+    if not mapping_file.exists():
+        return jsonify({'error': 'Mapping not found'}), 404
+    try:
+        with open(mapping_file, 'r') as f:
+            mapping_config = json.load(f)
+    except Exception:
+        mapping_config = {}
+    mapping_config['deal_sizing_inputs'] = payload
+    with open(mapping_file, 'w') as f:
+        json.dump(mapping_config, f)
+    return jsonify({'success': True})
+
+@app.route('/api/deal-sizing-standalone', methods=['POST'])
+def deal_sizing_standalone():
+    try:
+        payload = request.get_json(silent=True) or {}
+        merchant = (payload.get('merchant') or '').strip()
+        annual_orders = payload.get('annual_orders')
+        if not merchant:
+            return jsonify({'error': 'Merchant is required'}), 400
+        try:
+            annual_orders_value = float(annual_orders) if annual_orders not in (None, '') else 0
+        except Exception:
+            annual_orders_value = 0
+        if annual_orders_value <= 0:
+            return jsonify({'error': 'Annual orders is required'}), 400
+
+        _ensure_admin_log()
+        wb = openpyxl.load_workbook(ADMIN_LOG_PATH)
+        ws = wb['Deal sizing']
+        def _num(value):
+            try:
+                return float(value)
+            except Exception:
+                return 0.0
+
+        pct_usps = payload.get('pct_usps', '')
+        pct_fedex = payload.get('pct_fedex', '')
+        pct_ups = payload.get('pct_ups', '')
+        pct_amazon = payload.get('pct_amazon', '')
+        pct_uniuni = payload.get('pct_uniuni', '')
+        ups_avg_label = payload.get('ups_avg_label_cost', '')
+        fedex_spread = payload.get('fedex_actual_spread', '')
+        amazon_spread = payload.get('amazon_actual_spread', '')
+        uniuni_spread = payload.get('uniuni_actual_spread', '')
+        attach_rate = payload.get('attach_rate', '')
+        per_label_fee = payload.get('per_label_fee', '')
+        fee_order_pct = payload.get('fee_order_pct', '')
+        comment_sold = payload.get('commentsold', False)
+        ebay = payload.get('ebay', False)
+        live_selling = payload.get('live_selling', False)
+        printing = payload.get('printing', False)
+        saas_fee = payload.get('monthly_saas', '')
+        usps_size = _num(payload.get('usps_size', 0))
+        fedex_size = _num(payload.get('fedex_size', 0))
+        ups_size = _num(payload.get('ups_size', 0))
+        amazon_size = _num(payload.get('amazon_size', 0))
+        uniuni_size = _num(payload.get('uniuni_size', 0))
+        carrier_spread = usps_size + fedex_size + ups_size + amazon_size + uniuni_size
+        total_size = payload.get('total_size', '')
+        adjusted_orders = _effective_orders(annual_orders_value, _parse_bool(comment_sold), _parse_bool(ebay), _parse_bool(live_selling))
+        saas_tier = _saas_tier_name(annual_orders_value)
+
+        row = [
+            merchant,
+            payload.get('se_ae_on_deal', ''),
+            annual_orders_value,
+            pct_usps,
+            pct_fedex,
+            pct_ups,
+            pct_amazon,
+            pct_uniuni,
+            ups_avg_label,
+            fedex_spread,
+            amazon_spread,
+            uniuni_spread,
+            carrier_spread,
+            adjusted_orders,
+            attach_rate,
+            saas_fee,
+            saas_tier,
+            per_label_fee,
+            fee_order_pct,
+            comment_sold,
+            ebay,
+            live_selling,
+            printing,
+            total_size
+        ]
+        ws.append(row)
+        wb.save(ADMIN_LOG_PATH)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/mapping')
 def mapping_page():
@@ -2318,8 +3112,12 @@ def mapping():
         merchant_name = data.get('merchant_name', '')
         merchant_id = data.get('merchant_id', '')
         existing_customer = data.get('existing_customer', False)
+        se_ae_on_deal = data.get('se_ae_on_deal', '')
         origin_zip = data.get('origin_zip', '')
         annual_orders = data.get('annual_orders', '')
+        raw_invoice_file = data.get('raw_invoice_file', '')
+        amazon_eligible = data.get('amazon_eligible')
+        uniuni_eligible = data.get('uniuni_eligible')
         mapping_config = data.get('mapping', {})
         
         if not job_id:
@@ -2368,8 +3166,12 @@ def mapping():
             'merchant_name': merchant_name,
             'merchant_id': merchant_id,
             'existing_customer': existing_customer,
+            'se_ae_on_deal': se_ae_on_deal,
             'origin_zip': origin_zip,
             'annual_orders': annual_orders,
+            'raw_invoice_file': raw_invoice_file,
+            'amazon_eligible': amazon_eligible,
+            'uniuni_eligible': uniuni_eligible,
             'flow_type': data.get('flow_type', 'rate_card_plus_deal_sizing'),
             'mapping': mapping_config,
             'structure': structure,
@@ -3297,8 +4099,8 @@ def dashboard_data(job_id):
         selected_set = _dashboard_selected_from_redo(redo_selected)
         selected_dashboard = [c for c in available_carriers if c in selected_set]
         show_usps_market_discount = bool(
-            (eligibility and eligibility['amazon_eligible_final'] and 'Amazon' in redo_selected)
-            or (eligibility and eligibility['uniuni_eligible_final'] and 'UniUni' in redo_selected)
+            (eligibility and (eligibility['amazon_eligible_final'] or eligibility['uniuni_eligible_final']))
+            or ('Amazon' in redo_selected or 'UniUni' in redo_selected)
         )
         carrier_percentages = _carrier_distribution(job_dir, mapping_config, available_carriers)
         if request.method == 'POST':

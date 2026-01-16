@@ -14,55 +14,58 @@
     <div class="card entry-card">
       <div class="card-content">
         <div class="card-body">
-          <div class="entry-brand">
-            <img src="{{ url_for('static', filename='redo-logo.png') }}" alt="Redo" onerror="this.style.display='none'" />
+          <div class="portal-header portal-header--compact">
+            <img class="portal-logo portal-logo--plain" src="{{ url_for('static', filename='redo-logo.png') }}" alt="Redo" onerror="this.style.display='none'" />
+            <div class="portal-subtitle">Start A Deal Sizing Estimate Or Build A Full Rate Card</div>
           </div>
 
-          <div class="page-header entry-header">
-            <h1 class="sr-only">Redo</h1>
-          </div>
-
-          <div class="entry-grid">
-            <button class="entry-option" type="button" id="deal-sizing-btn">
-              <span class="entry-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <div class="portal-grid portal-grid--cards">
+            <button class="portal-card" type="button" id="deal-sizing-btn">
+              <span class="portal-card-icon">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <line x1="4" y1="19" x2="20" y2="19"></line>
                   <rect x="6" y="10" width="3" height="7" rx="1"></rect>
                   <rect x="11" y="6" width="3" height="11" rx="1"></rect>
                   <rect x="16" y="8" width="3" height="9" rx="1"></rect>
                 </svg>
               </span>
-              <div class="entry-option-text">
-                <div class="entry-option-title">Deal Sizing</div>
+              <div class="portal-card-text">
+                <div class="portal-card-title">Deal Sizing</div>
+                <div class="portal-card-meta">Quick Estimate With Carrier Mix Assumptions</div>
               </div>
-              <span class="entry-option-arrow">→</span>
+              <span class="portal-card-arrow">→</span>
             </button>
-            <button class="entry-option" type="button" id="rate-card-btn">
-              <span class="entry-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+
+            <button class="portal-card" type="button" id="rate-card-btn">
+              <span class="portal-card-icon">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="3" y="2" width="18" height="20" rx="2"></rect>
                   <line x1="7" y1="6" x2="17" y2="6"></line>
                   <line x1="7" y1="10" x2="17" y2="10"></line>
                   <line x1="7" y1="14" x2="13" y2="14"></line>
                 </svg>
               </span>
-              <div class="entry-option-text">
-                <div class="entry-option-title">Rate Card + Deal Sizing</div>
+              <div class="portal-card-text">
+                <div class="portal-card-title">Rate Card + Deal Sizing</div>
+                <div class="portal-card-meta">Upload Invoice And Generate A Full Rate Card</div>
               </div>
-              <span class="entry-option-arrow">→</span>
+              <span class="portal-card-arrow">→</span>
+            </button>
+
+            <button class="portal-card portal-card--admin" type="button" id="admin-btn">
+              <span class="portal-card-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+              </span>
+              <div class="portal-card-text">
+                <div class="portal-card-title">Admin</div>
+                <div class="portal-card-meta">View All Captured Submissions</div>
+              </div>
+              <span class="portal-card-arrow">→</span>
             </button>
           </div>
-
-          <button class="entry-admin" type="button" id="admin-btn">
-            <span class="entry-admin-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-              </svg>
-            </span>
-            <span class="entry-admin-text">Admin</span>
-            <span class="entry-option-arrow">→</span>
-          </button>
         </div>
       </div>
     </div>

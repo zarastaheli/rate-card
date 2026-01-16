@@ -14,25 +14,510 @@
     <div class="card entry-card">
       <div class="card-content">
         <div class="card-body">
-          <div class="entry-title">Deal Sizing</div>
-          <p class="subtitle">This flow is coming soon. We’ll plug it in here when it’s ready.</p>
+          <div class="entry-title entry-title--bold">Deal Sizing</div>
+          <p class="subtitle">Enter Details To Estimate The Deal Size</p>
+
+          <div class="section-block">
+            <div class="form-grid form-grid--three">
+              <div class="form-field">
+                <label class="field-label" for="deal-merchant">Merchant Name <span class="required-asterisk">*</span></label>
+                <input type="text" class="text-input" id="deal-merchant" placeholder="Merchant Name" required />
+              </div>
+              <div class="form-field">
+                <label class="field-label" for="deal-se-ae-on-deal">SE/AE On Deal <span class="required-asterisk">*</span></label>
+                <input type="text" class="text-input" id="deal-se-ae-on-deal" placeholder="SE/AE On Deal" required />
+              </div>
+              <div class="form-field">
+                <label class="field-label" for="deal-annual-orders">Annual Orders <span class="required-asterisk">*</span></label>
+                <input type="number" class="text-input" id="deal-annual-orders" placeholder="Annual Orders" min="0" required />
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title">Carrier Selection</div>
+            <div class="carrier-chips" id="deal-carrier-selector"></div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title">Carrier Mix</div>
+            <div class="deal-sizing-grid deal-sizing-grid--compact deal-sizing-grid--mix">
+              <div class="deal-sizing-field deal-carrier-field" data-carrier="USPS">
+                <label class="deal-sizing-label" for="deal-pct-usps">% USPS <span class="required-asterisk">*</span></label>
+                <div class="deal-sizing-input">
+                  <input type="number" class="text-input deal-input-filled" id="deal-pct-usps" min="0" max="100" step="0.1" required />
+                  <span class="deal-sizing-suffix">%</span>
+                </div>
+              </div>
+              <div class="deal-sizing-field deal-carrier-field" data-carrier="UPS">
+                <label class="deal-sizing-label" for="deal-pct-ups">% UPS <span class="required-asterisk">*</span></label>
+                <div class="deal-sizing-input">
+                  <input type="number" class="text-input deal-input-filled" id="deal-pct-ups" min="0" max="100" step="0.1" required />
+                  <span class="deal-sizing-suffix">%</span>
+                </div>
+              </div>
+              <div class="deal-sizing-field deal-carrier-field" data-carrier="FedEx">
+                <label class="deal-sizing-label" for="deal-pct-fedex">% FedEx <span class="required-asterisk">*</span></label>
+                <div class="deal-sizing-input">
+                  <input type="number" class="text-input deal-input-filled" id="deal-pct-fedex" min="0" max="100" step="0.1" required />
+                  <span class="deal-sizing-suffix">%</span>
+                </div>
+              </div>
+              <div class="deal-sizing-field deal-carrier-field" data-carrier="Amazon">
+                <label class="deal-sizing-label" for="deal-pct-amazon">% Amazon <span class="required-asterisk">*</span></label>
+                <div class="deal-sizing-input">
+                  <input type="number" class="text-input deal-input-filled" id="deal-pct-amazon" min="0" max="100" step="0.1" required />
+                  <span class="deal-sizing-suffix">%</span>
+                </div>
+              </div>
+              <div class="deal-sizing-field deal-carrier-field" data-carrier="UniUni">
+                <label class="deal-sizing-label" for="deal-pct-uniuni">% UniUni <span class="required-asterisk">*</span></label>
+                <div class="deal-sizing-input">
+                  <input type="number" class="text-input deal-input-filled" id="deal-pct-uniuni" min="0" max="100" step="0.1" required />
+                  <span class="deal-sizing-suffix">%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title">Carrier Inputs</div>
+            <div class="deal-sizing-grid deal-sizing-grid--carrier-inputs">
+              <div class="deal-sizing-field deal-carrier-field" data-carrier="UPS">
+                <label class="deal-sizing-label" for="deal-ups-avg-label">UPS Average Label Cost <span class="required-asterisk">*</span></label>
+                <div class="deal-sizing-input">
+                  <span class="deal-sizing-prefix">$</span>
+                  <input type="number" class="text-input deal-input-filled" id="deal-ups-avg-label" min="0" step="0.01" required />
+                </div>
+              </div>
+              <div class="deal-sizing-field deal-carrier-field" data-carrier="FedEx">
+                <label class="deal-sizing-label" for="deal-fedex-spread">FedEx Actual Spread <span class="required-asterisk">*</span>
+                  <span class="info-hint" data-tooltip="Find on Outbound Labels Dashboard - Total Spread / Total Orders for Each Carrier" aria-label="Find on Outbound Labels Dashboard - Total Spread / Total Orders for Each Carrier">i</span>
+                </label>
+                <div class="deal-sizing-input">
+                  <span class="deal-sizing-prefix">$</span>
+                  <input type="number" class="text-input deal-input-filled" id="deal-fedex-spread" min="0" step="0.01" required />
+                </div>
+              </div>
+              <div class="deal-sizing-field deal-carrier-field" data-carrier="Amazon">
+                <label class="deal-sizing-label" for="deal-amazon-spread">Amazon Actual Spread <span class="required-asterisk">*</span>
+                  <span class="info-hint" data-tooltip="Find on Outbound Labels Dashboard - Total Spread / Total Orders for Each Carrier" aria-label="Find on Outbound Labels Dashboard - Total Spread / Total Orders for Each Carrier">i</span>
+                </label>
+                <div class="deal-sizing-input">
+                  <span class="deal-sizing-prefix">$</span>
+                  <input type="number" class="text-input deal-input-filled" id="deal-amazon-spread" min="0" step="0.01" required />
+                </div>
+              </div>
+              <div class="deal-sizing-field deal-carrier-field" data-carrier="UniUni">
+                <label class="deal-sizing-label" for="deal-uniuni-spread">UniUni Actual Spread <span class="required-asterisk">*</span>
+                  <span class="info-hint" data-tooltip="Find on Outbound Labels Dashboard - Total Spread / Total Orders for Each Carrier" aria-label="Find on Outbound Labels Dashboard - Total Spread / Total Orders for Each Carrier">i</span>
+                </label>
+                <div class="deal-sizing-input">
+                  <span class="deal-sizing-prefix">$</span>
+                  <input type="number" class="text-input deal-input-filled" id="deal-uniuni-spread" min="0" step="0.01" required />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title">Sizing Summary</div>
+            <div class="deal-sizing-summary">
+              <div class="deal-summary-card">
+                <div class="deal-summary-label">Carrier Spread</div>
+                <div class="deal-summary-value" id="deal-carrier-spread">$--</div>
+              </div>
+              <div class="deal-summary-card">
+                <div class="deal-summary-label">Adjusted Annual Orders</div>
+                <div class="deal-summary-value" id="deal-adjusted-orders">--</div>
+              </div>
+              <div class="deal-summary-card">
+                <div class="deal-summary-label">Attach Rate <span class="required-asterisk">*</span></div>
+                <div class="deal-summary-input">
+                  <input type="number" class="text-input deal-input-filled deal-input-attach" id="deal-attach-rate" min="0" max="100" step="0.1" required />
+                  <span class="deal-sizing-suffix">%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title">Fee Assumptions</div>
+            <div class="deal-sizing-grid deal-sizing-grid--fees">
+              <div class="deal-sizing-field">
+                <label class="deal-sizing-label" for="deal-saas-fee">
+                  SaaS Fee: <span class="deal-sizing-tier" id="deal-saas-tier">Starter Tier</span>
+                </label>
+                <div class="deal-sizing-input">
+                  <span class="deal-sizing-prefix">$</span>
+                  <input type="number" class="text-input deal-input-filled" id="deal-saas-fee" min="0" step="0.01" />
+                </div>
+              </div>
+              <div class="deal-sizing-field">
+                <label class="deal-sizing-label" for="deal-per-label-fee">Per Label Fee</label>
+                <div class="deal-sizing-input">
+                  <span class="deal-sizing-prefix">$</span>
+                  <input type="number" class="text-input deal-input-filled" id="deal-per-label-fee" min="0" step="0.01" />
+                </div>
+              </div>
+              <div class="deal-sizing-field">
+                <label class="deal-sizing-label" for="deal-fee-order-pct">% Of Orders With Fee</label>
+                <div class="deal-sizing-input">
+                  <input type="number" class="text-input deal-input-filled" id="deal-fee-order-pct" min="0" max="100" step="0.1" />
+                  <span class="deal-sizing-suffix">%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="deal-sizing-toggles">
+            <div class="toggle-row toggle-row--flat">
+              <span>CommentSold</span>
+              <label class="switch">
+                <input type="checkbox" id="deal-commentsold" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row toggle-row--flat toggle-row--stack">
+              <div class="toggle-stack">
+                <div class="toggle-stack-row">
+                  <span>Ebay</span>
+                  <label class="switch">
+                    <input type="checkbox" id="deal-ebay" />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+                <div class="toggle-stack-row toggle-stack-row--nested" id="deal-live-row">
+                  <span>Live Selling</span>
+                  <label class="switch">
+                    <input type="checkbox" id="deal-live-selling" />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="toggle-row toggle-row--flat">
+              <span>Printing Today</span>
+              <label class="switch">
+                <input type="checkbox" id="deal-printing" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="deal-sizing-upload-block" id="deal-attach-upload-field">
+            <div class="deal-sizing-upload-drop">
+              <span class="deal-upload-icon" aria-hidden="true">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+              </span>
+              <div class="deal-sizing-upload-text">
+                <strong>Upload A Screenshot Of Redo Usage Dashboard</strong>
+                <span>Required If Attach Rate Is Above 85%</span>
+              </div>
+              <input type="file" class="deal-sizing-file" id="deal-attach-upload" accept="image/*,.pdf" />
+            </div>
+          </div>
+
           <div class="button-row">
             <button class="button button-secondary" type="button" id="back-home">Back</button>
-            <button class="button button-primary" type="button" id="go-rate-card">Go to rate card flow</button>
+            <button class="button button-primary" type="button" id="calculate-deal">Calculate</button>
           </div>
         </div>
       </div>
     </div>
   </div>
 
+  <div class="modal-overlay is-hidden" id="deal-size-modal">
+    <div class="modal-card deal-size-modal-card">
+      <div class="modal-title">Deal Size</div>
+      <p class="modal-subtitle">Estimated Total Based On Your Inputs</p>
+      <div class="deal-size-value" id="deal-size-result">$--</div>
+      <div class="modal-actions deal-size-actions">
+        <button class="button button-secondary" type="button" id="deal-size-close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script>
+    const merchantInput = document.getElementById('deal-merchant');
+    const seAeOnDealInput = document.getElementById('deal-se-ae-on-deal');
+    const annualOrdersInput = document.getElementById('deal-annual-orders');
+    const commentSoldToggle = document.getElementById('deal-commentsold');
+    const ebayToggle = document.getElementById('deal-ebay');
+    const liveSellingToggle = document.getElementById('deal-live-selling');
+    const liveRow = document.getElementById('deal-live-row');
+    const printingToggle = document.getElementById('deal-printing');
+    const carrierSelector = document.getElementById('deal-carrier-selector');
+    const carrierFields = Array.from(document.querySelectorAll('.deal-carrier-field'));
+
+    const pctUspsInput = document.getElementById('deal-pct-usps');
+    const pctUpsInput = document.getElementById('deal-pct-ups');
+    const pctFedexInput = document.getElementById('deal-pct-fedex');
+    const pctAmazonInput = document.getElementById('deal-pct-amazon');
+    const pctUniUniInput = document.getElementById('deal-pct-uniuni');
+
+    const upsAvgLabelInput = document.getElementById('deal-ups-avg-label');
+    const fedexSpreadInput = document.getElementById('deal-fedex-spread');
+    const amazonSpreadInput = document.getElementById('deal-amazon-spread');
+    const uniuniSpreadInput = document.getElementById('deal-uniuni-spread');
+
+    const carrierSpreadEl = document.getElementById('deal-carrier-spread');
+    const adjustedOrdersEl = document.getElementById('deal-adjusted-orders');
+    const attachRateInput = document.getElementById('deal-attach-rate');
+    const attachUploadField = document.getElementById('deal-attach-upload-field');
+    const attachUpload = document.getElementById('deal-attach-upload');
+    const dealSizeModal = document.getElementById('deal-size-modal');
+    const dealSizeResult = document.getElementById('deal-size-result');
+    const dealSizeClose = document.getElementById('deal-size-close');
+
+    const dealSaasFeeInput = document.getElementById('deal-saas-fee');
+    const dealSaasTierLabel = document.getElementById('deal-saas-tier');
+    const dealPerLabelFeeInput = document.getElementById('deal-per-label-fee');
+    const dealFeeOrderPctInput = document.getElementById('deal-fee-order-pct');
+
+    const carrierOptions = ['USPS', 'UPS', 'FedEx', 'Amazon', 'UniUni'];
+    let selectedCarriers = new Set(carrierOptions);
+
+    function validateRequiredFields() {
+      const requiredInputs = Array.from(document.querySelectorAll('input[required]'));
+      for (const input of requiredInputs) {
+        const field = input.closest('.deal-carrier-field');
+        if (field && field.classList.contains('is-hidden')) {
+          continue;
+        }
+        if (!input.value || String(input.value).trim() === '') {
+          input.focus();
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function updateCarrierFields() {
+      carrierFields.forEach((field) => {
+        const carrier = field.dataset.carrier;
+        const isSelected = selectedCarriers.has(carrier);
+        field.classList.toggle('is-hidden', !isSelected);
+      });
+    }
+
+    function renderCarrierSelector() {
+      if (!carrierSelector) return;
+      carrierSelector.innerHTML = '';
+      carrierOptions.forEach((carrier) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'carrier-chip';
+        if (selectedCarriers.has(carrier)) {
+          button.classList.add('is-selected');
+        }
+        button.textContent = carrier;
+        button.addEventListener('click', () => {
+          if (selectedCarriers.has(carrier)) {
+            selectedCarriers.delete(carrier);
+          } else {
+            selectedCarriers.add(carrier);
+          }
+          renderCarrierSelector();
+          updateCarrierFields();
+          updateSizing();
+        });
+        carrierSelector.appendChild(button);
+      });
+    }
+
+    function toNumber(value) {
+      if (value === null || value === undefined || value === '') return 0;
+      const parsed = Number(String(value).replace(/,/g, '').trim());
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function toPercent(value) {
+      return toNumber(value) / 100;
+    }
+
+    function formatNumber(value) {
+      if (!Number.isFinite(value)) return '--';
+      return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+    }
+
+    function formatCurrency(value) {
+      if (!Number.isFinite(value)) return '$--';
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 0
+      }).format(value);
+    }
+
+    function saasTierForOrders(annualOrders) {
+      if (!Number.isFinite(annualOrders) || annualOrders <= 0) {
+        return { fee: 0, tier: 'Starter Tier' };
+      }
+      if (annualOrders < 5000) {
+        return { fee: 99, tier: 'Starter Tier' };
+      }
+      if (annualOrders < 15000) {
+        return { fee: 199, tier: 'Growth Tier' };
+      }
+      if (annualOrders < 35000) {
+        return { fee: 299, tier: 'Pro Tier' };
+      }
+      if (annualOrders < 50000) {
+        return { fee: 399, tier: 'Scale Tier' };
+      }
+      return { fee: 399, tier: 'Enterprise Tier' };
+    }
+
+    let latestTotalSize = 0;
+
+    let manualSaasFee = false;
+
+    function updateSizing() {
+      const annualOrders = toNumber(annualOrdersInput.value);
+      const commentSold = commentSoldToggle.checked;
+      const ebay = ebayToggle.checked;
+      const liveSelling = liveSellingToggle.checked;
+
+      let adjustedOrders = annualOrders;
+      if (commentSold) adjustedOrders *= 0.6;
+      if (ebay) {
+        adjustedOrders *= liveSelling ? 0.6 : 0.95;
+      }
+      const attachRate = toNumber(attachRateInput.value || 0);
+      const attachFactor = Number.isFinite(attachRate) ? attachRate / 100 : 1;
+      const effectiveOrders = adjustedOrders * attachFactor;
+
+      const pctUsps = selectedCarriers.has('USPS') ? toPercent(pctUspsInput.value) : 0;
+      const pctUps = selectedCarriers.has('UPS') ? toPercent(pctUpsInput.value) : 0;
+      const pctFedex = selectedCarriers.has('FedEx') ? toPercent(pctFedexInput.value) : 0;
+      const pctAmazon = selectedCarriers.has('Amazon') ? toPercent(pctAmazonInput.value) : 0;
+      const pctUniUni = selectedCarriers.has('UniUni') ? toPercent(pctUniUniInput.value) : 0;
+
+      const upsAvgLabel = selectedCarriers.has('UPS') ? toNumber(upsAvgLabelInput.value) : 0;
+      const fedexSpread = selectedCarriers.has('FedEx') ? toNumber(fedexSpreadInput.value) : 0;
+      const amazonSpread = selectedCarriers.has('Amazon') ? toNumber(amazonSpreadInput.value) : 0;
+      const uniuniSpread = selectedCarriers.has('UniUni') ? toNumber(uniuniSpreadInput.value) : 0;
+
+      const uspsSize = 0.2 * pctUsps * effectiveOrders;
+      const upsSize = upsAvgLabel * 0.11 * pctUps * effectiveOrders;
+      const fedexSize = fedexSpread * pctFedex * effectiveOrders;
+      const amazonSize = amazonSpread * pctAmazon * effectiveOrders;
+      const uniuniSize = uniuniSpread * pctUniUni * effectiveOrders;
+
+      const totalSpread = uspsSize + upsSize + fedexSize + amazonSize + uniuniSize;
+      const saasTier = saasTierForOrders(annualOrders);
+      const autoSaas = saasTier.fee;
+      const monthlySaas = manualSaasFee ? toNumber(dealSaasFeeInput.value) : autoSaas;
+      if (dealSaasTierLabel) {
+        dealSaasTierLabel.textContent = saasTier.tier;
+      }
+      const perLabelFee = toNumber(dealPerLabelFeeInput.value);
+      const feeOrderPct = toNumber(dealFeeOrderPctInput.value) / 100;
+      const labelFeeTotal = perLabelFee * feeOrderPct * annualOrders;
+      const totalSize = totalSpread + monthlySaas + labelFeeTotal;
+      latestTotalSize = totalSize;
+
+      carrierSpreadEl.textContent = formatCurrency(totalSpread);
+      adjustedOrdersEl.textContent = formatNumber(adjustedOrders);
+
+      if (dealSaasFeeInput && !manualSaasFee) {
+        dealSaasFeeInput.value = Number.isFinite(monthlySaas) ? monthlySaas.toFixed(0) : '';
+      }
+    }
+
+    function updateAttachUpload() {
+      const attachRate = toNumber(attachRateInput.value);
+      const showUpload = Number.isFinite(attachRate) && attachRate > 85;
+      attachUploadField.classList.toggle('is-hidden', !showUpload);
+      attachUpload.required = showUpload;
+      if (!showUpload) {
+        attachUpload.value = '';
+      }
+    }
+
+    document.querySelectorAll('input').forEach((input) => {
+      input.addEventListener('input', () => {
+        updateSizing();
+        updateAttachUpload();
+      });
+      input.addEventListener('change', () => {
+        updateSizing();
+        updateAttachUpload();
+      });
+    });
+
+    ebayToggle.addEventListener('change', () => {
+      liveRow.style.display = ebayToggle.checked ? 'flex' : 'none';
+      if (!ebayToggle.checked) {
+        liveSellingToggle.checked = false;
+      }
+      updateSizing();
+    });
+    liveSellingToggle.addEventListener('change', updateSizing);
+    commentSoldToggle.addEventListener('change', updateSizing);
+    printingToggle.addEventListener('change', updateSizing);
+
     document.getElementById('back-home').addEventListener('click', () => {
       window.location.href = '/';
     });
-    document.getElementById('go-rate-card').addEventListener('click', () => {
-      localStorage.setItem('flow_type', 'rate_card_plus_deal_sizing');
-      window.location.href = '/upload';
+
+    document.getElementById('calculate-deal').addEventListener('click', () => {
+      const annualOrders = toNumber(annualOrdersInput.value);
+      if (!validateRequiredFields()) {
+        alert('Please Fill All Required Fields');
+        return;
+      }
+      if (!annualOrders) {
+        alert('Annual Orders Is Required');
+        return;
+      }
+      const attachRate = toNumber(attachRateInput.value || 85);
+      const requiresUpload = Number.isFinite(attachRate) && attachRate > 85;
+      if (requiresUpload && !attachUpload.files.length) {
+        alert('Upload A Screenshot Of Redo Usage Dashboard');
+        return;
+      }
+      if (dealSizeResult) {
+        dealSizeResult.textContent = formatCurrency(latestTotalSize);
+      }
+      if (dealSizeModal) {
+        dealSizeModal.classList.remove('is-hidden');
+      }
     });
+
+    if (dealSizeClose && dealSizeModal) {
+      dealSizeClose.addEventListener('click', () => dealSizeModal.classList.add('is-hidden'));
+      dealSizeModal.addEventListener('click', (event) => {
+        if (event.target === dealSizeModal) {
+          dealSizeModal.classList.add('is-hidden');
+        }
+      });
+    }
+
+    attachRateInput.value = '85';
+    if (dealSaasFeeInput) {
+      dealSaasFeeInput.addEventListener('input', () => {
+        manualSaasFee = dealSaasFeeInput.value !== '';
+        updateSizing();
+      });
+      const initialTier = saasTierForOrders(0);
+      dealSaasFeeInput.value = initialTier.fee.toFixed(0);
+      if (dealSaasTierLabel) {
+        dealSaasTierLabel.textContent = initialTier.tier;
+      }
+    }
+    if (liveRow) {
+      liveRow.style.display = 'none';
+    }
+    renderCarrierSelector();
+    updateCarrierFields();
+    updateSizing();
+    updateAttachUpload();
   </script>
 </body>
 </html>

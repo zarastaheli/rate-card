@@ -69,8 +69,9 @@
         <table class="mapping-table">
           <thead>
             <tr>
-              <th class="col-field-name">Standard field name</th>
-              <th class="col-invoice-column">Invoice column</th>
+              <th class="col-confidence">Confidence</th>
+              <th class="col-field-name">Standard Field Name</th>
+              <th class="col-invoice-column">Invoice Column</th>
               <th class="col-status">Status</th>
             </tr>
           </thead>
@@ -150,13 +151,37 @@
       return weightUnitByColumn[column] || weightUnitFallback || '';
     }
 
+    const highConfidenceFields = new Set([
+      'Width',
+      'Length',
+      'Height',
+      'Package Width',
+      'Package Length',
+      'Package Height',
+      'Weight',
+      'Zone',
+      'Shipping Service'
+    ]);
+
     function createMappingRow(field, required) {
       const tr = document.createElement('tr');
       const suggested = suggestions[field];
       const isSuggested = !!suggested;
       
       tr.className = `field-row ${isSuggested ? 'is-suggested' : ''}`;
+      if (highConfidenceFields.has(field)) {
+        tr.classList.add('field-row--preferred');
+      }
       tr.dataset.field = field;
+
+      // Confidence
+      const tdConfidence = document.createElement('td');
+      tdConfidence.className = 'field-confidence';
+      const dot = document.createElement('span');
+      dot.className = 'confidence-dot confidence-dot--empty';
+      dot.title = 'No mapping selected yet';
+      tdConfidence.appendChild(dot);
+      tr.appendChild(tdConfidence);
 
       // Field label
       const tdLabel = document.createElement('td');
@@ -303,6 +328,37 @@
       return tr;
     }
 
+    function normalizeMappingLabel(value) {
+      return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
+    }
+
+    function updateConfidence(row, field, value) {
+      const dot = row.querySelector('.confidence-dot');
+      if (!dot) return;
+      if (!value) {
+        dot.className = 'confidence-dot confidence-dot--empty';
+        dot.title = 'No mapping selected yet';
+        return;
+      }
+      if (row.classList.contains('field-row--preferred')) {
+        dot.className = 'confidence-dot confidence-dot--high';
+        dot.title = 'High confidence: key field';
+        return;
+      }
+      const normalizedField = normalizeMappingLabel(field);
+      const normalizedValue = normalizeMappingLabel(value);
+      const isExact = normalizedField === normalizedValue;
+      if (isExact) {
+        dot.className = 'confidence-dot confidence-dot--high';
+        dot.title = 'High confidence: exact label match';
+      } else {
+        dot.className = 'confidence-dot confidence-dot--medium';
+        dot.title = 'Review: mapping does not exactly match the field label';
+      }
+    }
+
     function updateRowState(row, field, value) {
       mappingState[field] = value;
       
@@ -337,6 +393,7 @@
         badge.textContent = 'Required';
       }
 
+      updateConfidence(row, field, value);
     }
 
     function validateMapping() {
@@ -390,10 +447,14 @@
       const merchantName = localStorage.getItem('merchant_name') || '';
       const merchantId = localStorage.getItem('merchant_id') || '';
       const existingCustomer = !!localStorage.getItem('merchant_id');
+      const seAeOnDeal = localStorage.getItem('se_ae_on_deal') || '';
       const originZip = localStorage.getItem('origin_zip') || '';
       const annualOrders = localStorage.getItem('annual_orders') || '';
       const structure = localStorage.getItem('detected_structure') || 'zone';
       const flowType = localStorage.getItem('flow_type') || 'rate_card_plus_deal_sizing';
+      const rawInvoiceFile = localStorage.getItem('uploaded_file_name') || '';
+      const amazonEligible = localStorage.getItem('amazon_eligible');
+      const uniuniEligible = localStorage.getItem('uniuni_eligible');
 
       fetch('/api/mapping', {
         method: 'POST',
@@ -403,8 +464,12 @@
           merchant_name: merchantName,
           merchant_id: merchantId,
           existing_customer: existingCustomer,
+          se_ae_on_deal: seAeOnDeal,
           origin_zip: originZip,
           annual_orders: annualOrders,
+          raw_invoice_file: rawInvoiceFile,
+          amazon_eligible: amazonEligible,
+          uniuni_eligible: uniuniEligible,
           structure: structure,
           flow_type: flowType,
           mapping: mappingState
