@@ -87,7 +87,7 @@
                 <label class="deal-sizing-label" for="deal-ups-avg-label">UPS Average Label Cost <span class="required-asterisk">*</span></label>
                 <div class="deal-sizing-input">
                   <span class="deal-sizing-prefix">$</span>
-                  <input type="number" class="text-input deal-input-filled" id="deal-ups-avg-label" min="0" step="0.01" required />
+                  <input type="number" class="text-input deal-input-filled requires-nonzero" id="deal-ups-avg-label" min="0" step="0.01" required />
                 </div>
               </div>
               <div class="deal-sizing-field deal-carrier-field" data-carrier="FedEx">
@@ -96,7 +96,7 @@
                 </label>
                 <div class="deal-sizing-input">
                   <span class="deal-sizing-prefix">$</span>
-                  <input type="number" class="text-input deal-input-filled" id="deal-fedex-spread" min="0" step="0.01" required />
+                  <input type="number" class="text-input deal-input-filled requires-nonzero" id="deal-fedex-spread" min="0" step="0.01" required />
                 </div>
               </div>
               <div class="deal-sizing-field deal-carrier-field" data-carrier="Amazon">
@@ -105,7 +105,7 @@
                 </label>
                 <div class="deal-sizing-input">
                   <span class="deal-sizing-prefix">$</span>
-                  <input type="number" class="text-input deal-input-filled" id="deal-amazon-spread" min="0" step="0.01" required />
+                  <input type="number" class="text-input deal-input-filled requires-nonzero" id="deal-amazon-spread" min="0" step="0.01" required />
                 </div>
               </div>
               <div class="deal-sizing-field deal-carrier-field" data-carrier="UniUni">
@@ -114,7 +114,7 @@
                 </label>
                 <div class="deal-sizing-input">
                   <span class="deal-sizing-prefix">$</span>
-                  <input type="number" class="text-input deal-input-filled" id="deal-uniuni-spread" min="0" step="0.01" required />
+                  <input type="number" class="text-input deal-input-filled requires-nonzero" id="deal-uniuni-spread" min="0" step="0.01" required />
                 </div>
               </div>
             </div>
@@ -223,7 +223,7 @@
           </div>
 
           <div class="button-row">
-            <button class="button button-secondary" type="button" id="back-home">Back</button>
+            <button class="button button-secondary" type="button" id="back-home">Back To Home</button>
             <button class="button button-primary" type="button" id="calculate-deal">Calculate</button>
           </div>
         </div>
@@ -235,11 +235,15 @@
     <div class="modal-card deal-size-modal-card">
       <div class="modal-title">Deal Size</div>
       <p class="modal-subtitle">Estimated Total Based On Your Inputs</p>
-      <div class="deal-size-value" id="deal-size-result">$--</div>
-      <div class="modal-actions deal-size-actions">
-        <button class="button button-secondary" type="button" id="deal-size-close">Close</button>
+        <div class="deal-size-output">
+          <div class="deal-size-pill" id="deal-size-result">$--</div>
+          <button class="button button-secondary button-compact deal-size-copy" type="button" id="deal-size-copy" aria-label="Copy deal size" title="Copy">⧉</button>
+        </div>
+        <div class="modal-actions deal-size-actions">
+          <button class="button button-secondary" type="button" id="deal-size-home">Return To Home</button>
+          <button class="button button-secondary" type="button" id="deal-size-close">Close</button>
+        </div>
       </div>
-    </div>
   </div>
 
   <script>
@@ -273,6 +277,8 @@
     const dealSizeModal = document.getElementById('deal-size-modal');
     const dealSizeResult = document.getElementById('deal-size-result');
     const dealSizeClose = document.getElementById('deal-size-close');
+    const dealSizeCopy = document.getElementById('deal-size-copy');
+    const dealSizeHome = document.getElementById('deal-size-home');
 
     const dealSaasFeeInput = document.getElementById('deal-saas-fee');
     const dealSaasTierLabel = document.getElementById('deal-saas-tier');
@@ -281,6 +287,18 @@
 
     const carrierOptions = ['USPS', 'UPS', 'FedEx', 'Amazon', 'UniUni'];
     let selectedCarriers = new Set(carrierOptions);
+
+    function ensureZeroDefault(input) {
+      if (!input) return;
+      if (input.value === '' || input.value === null || input.value === undefined) {
+        input.value = '0.00';
+      }
+      input.addEventListener('blur', () => {
+        if (input.value === '' || input.value === null || input.value === undefined) {
+          input.value = '0.00';
+        }
+      });
+    }
 
     function validateRequiredFields() {
       const requiredInputs = Array.from(document.querySelectorAll('input[required]'));
@@ -292,6 +310,13 @@
         if (!input.value || String(input.value).trim() === '') {
           input.focus();
           return false;
+        }
+        if (input.classList.contains('requires-nonzero')) {
+          const numericValue = parseFloat(String(input.value).replace(/,/g, ''));
+          if (!Number.isFinite(numericValue) || numericValue <= 0) {
+            input.focus();
+            return false;
+          }
         }
       }
       return true;
@@ -498,8 +523,38 @@
         }
       });
     }
+    if (dealSizeHome) {
+      dealSizeHome.addEventListener('click', () => {
+        window.location.href = '/';
+      });
+    }
+    if (dealSizeCopy) {
+      dealSizeCopy.addEventListener('click', async () => {
+        const value = (dealSizeResult?.textContent || '').trim();
+        if (!value || value === '$--') return;
+        try {
+          await navigator.clipboard.writeText(value);
+          dealSizeCopy.textContent = '✓';
+          setTimeout(() => {
+            dealSizeCopy.textContent = '⧉';
+          }, 1200);
+        } catch (err) {
+          const temp = document.createElement('input');
+          temp.value = value;
+          document.body.appendChild(temp);
+          temp.select();
+          document.execCommand('copy');
+          document.body.removeChild(temp);
+        }
+      });
+    }
 
     attachRateInput.value = '85';
+    ensureZeroDefault(upsAvgLabelInput);
+    ensureZeroDefault(fedexSpreadInput);
+    ensureZeroDefault(amazonSpreadInput);
+    ensureZeroDefault(uniuniSpreadInput);
+    ensureZeroDefault(dealPerLabelFeeInput);
     if (dealSaasFeeInput) {
       dealSaasFeeInput.addEventListener('input', () => {
         manualSaasFee = dealSaasFeeInput.value !== '';

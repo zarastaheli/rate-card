@@ -376,7 +376,7 @@
       <div class="dashboard-footnote dashboard-footnote--alert">All Figures Are Estimates - Final Deal Size Will Be Determined By Deal Desk</div>
       <div class="dashboard-bottom-actions">
         <button class="button button-secondary" type="button" id="back-to-redo-btn">Back</button>
-        <button class="button button-secondary" type="button" id="start-over-btn">Start Over</button>
+        <button class="button button-secondary" type="button" id="start-over-btn">Save And Return To Home</button>
       </div>
       </div>
 
@@ -506,7 +506,9 @@
       if (value === null || value === undefined || value === '') return '--';
       if (typeof value === 'string') return value;
       if (label.includes('%')) {
-        return `${Math.round(value * 100)}%`;
+        const pct = Math.round(value * 100);
+        const bounded = Math.max(0, Math.min(100, pct));
+        return `${bounded}%`;
       }
       return new Intl.NumberFormat('en-US', {
         style: 'currency',
@@ -1146,7 +1148,8 @@
       const baseAnnualOrders = parseNumberValue(
         data.annual_orders || localStorage.getItem('annual_orders') || 0
       );
-      const winRate = Number(currentMetrics['% Orders We Could Win'] || 0) * 100;
+      const rawWinRate = Number(currentMetrics['% Orders We Could Win'] || 0) * 100;
+      const winRate = Math.max(0, Math.min(100, rawWinRate));
       const avgLabel = Number.isFinite(parseNumberValue(storedInputs && storedInputs.avgLabelCost))
         ? parseNumberValue(storedInputs && storedInputs.avgLabelCost)
         : Number(data.avg_label_cost || 0);
@@ -1158,7 +1161,7 @@
         : 0.00;
       const feeOrderPct = Number.isFinite(parseNumberValue(storedInputs && storedInputs.feeOrderPct))
         ? parseNumberValue(storedInputs && storedInputs.feeOrderPct) * 100
-        : 100 - winRate;
+        : Math.max(0, 100 - winRate);
       const attachRate = Number.isFinite(parseNumberValue(storedInputs && storedInputs.attachRate))
         ? parseNumberValue(storedInputs && storedInputs.attachRate)
         : 85;
