@@ -74,7 +74,7 @@
       <!-- Action Links -->
       <div class="action-row">
         <a href="#" class="action-link action-link-pill" id="supporting-files-toggle">See supporting files</a>
-        <a href="#" class="action-link" id="sharepoint-link">
+        <a href="https://redotechinc.sharepoint.com/sites/Redo/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FRedo%2FShared%20Documents%2FAll%20Rate%20Cards%2FUpdating&viewid=90e9a3fe%2Df7a4%2D42c6%2Da353%2D200c53d2e4f3&view=7" class="action-link" id="sharepoint-link">
           View file in SharePoint
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
@@ -121,7 +121,7 @@
       window.location.href = `/download/${jobId}/rate-card`;
     });
 
-    sharepointLink.href = `https://sharepoint.example.com?merchant=${encodeURIComponent(merchantName)}`;
+    sharepointLink.href = 'https://redotechinc.sharepoint.com/sites/Redo/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FRedo%2FShared%20Documents%2FAll%20Rate%20Cards%2FUpdating&viewid=90e9a3fe%2Df7a4%2D42c6%2Da353%2D200c53d2e4f3&view=7';
 
     supportingFilesToggle.addEventListener('click', (e) => {
       e.preventDefault();

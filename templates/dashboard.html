@@ -462,7 +462,10 @@
       window.location.href = `/download/${jobId}/rate-card`;
     });
     sharepointBtn.addEventListener('click', () => {
-      window.open(`https://sharepoint.example.com?merchant=${encodeURIComponent(merchantName)}`, '_blank');
+      window.open(
+        'https://redotechinc.sharepoint.com/sites/Redo/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FRedo%2FShared%20Documents%2FAll%20Rate%20Cards%2FUpdating&viewid=90e9a3fe%2Df7a4%2D42c6%2Da353%2D200c53d2e4f3&view=7',
+        '_blank'
+      );
     });
     backToRedoBtn.addEventListener('click', () => {
       window.location.href = `/redo-carriers?job_id=${jobId}`;
@@ -602,6 +605,8 @@
       return `${Math.round(value * 100)}`;
     }
 
+    const hiddenCarriers = new Set(['FedEx']);
+
     function renderSelectedCarriers(available, selected, options = {}) {
       const containers = options.containers || [];
       const showPercent = !!options.showPercent;
@@ -609,9 +614,10 @@
         if (container) container.innerHTML = '';
       });
       const selectedSet = new Set(selected);
+      const filteredAvailable = available.filter(carrier => !hiddenCarriers.has(carrier));
       const ordered = [
-        ...available.filter(carrier => selectedSet.has(carrier)),
-        ...available.filter(carrier => !selectedSet.has(carrier))
+        ...filteredAvailable.filter(carrier => selectedSet.has(carrier)),
+        ...filteredAvailable.filter(carrier => !selectedSet.has(carrier))
       ];
       ordered.forEach((carrier) => {
         containers.forEach((container) => {
@@ -673,7 +679,9 @@
           .filter(val => val !== null);
         maxValues[key] = values.length ? Math.max(...values) : null;
       });
-      perCarrier.forEach((row) => {
+      perCarrier
+        .filter(row => !hiddenCarriers.has(row.carrier))
+        .forEach((row) => {
         const metrics = row.metrics || {};
         const rowEl = document.createElement('div');
         rowEl.className = 'breakdown-row';
@@ -756,6 +764,12 @@
         setTimeout(() => loadDashboard(selected, initial, recalculating, refresh), 700);
         return;
       }
+      const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+      const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+      if (!selected && filteredSelected.length !== (data.selected_carriers || []).length) {
+        await loadDashboard(filteredSelected, false, true, true);
+        return;
+      }
       annualOrdersMissing = !!data.annual_orders_missing;
       annualOrdersBanner.classList.toggle('is-hidden', !annualOrdersMissing);
       const showDiscounts = !data.summary_pending && !!data.show_usps_market_discount;
@@ -767,10 +781,10 @@
           ? Number(data.usps_market_dollar_off).toFixed(2).replace(/\.00$/, '')
           : '0';
       }
-      currentSelection = data.selected_carriers || [];
+      currentSelection = filteredSelected;
       carrierPercentages = data.carrier_percentages || {};
       renderSummary(data.overall || {});
-      renderCarrierBars(data.available_carriers || [], currentSelection);
+      renderCarrierBars(filteredAvailable, currentSelection);
       const breakdownSection = document.getElementById('breakdown-section');
       if (breakdownSection) {
         breakdownSection.classList.remove('is-hidden');
@@ -828,7 +842,10 @@
           renderCarrierBars(carriers, currentSelection);
           return;
         }
-        loadDashboard(nextSelected, false, true);
+        loadDashboard(nextSelected, false, true, true).then(async () => {
+          await loadPerCarrier(true);
+          await refreshDealSizeFromStoredInputs();
+        });
       }, 200);
     });
 

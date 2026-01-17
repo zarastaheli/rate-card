@@ -279,6 +279,44 @@ def compute_eligibility(origin_zip, annual_orders, working_days_per_year=None, m
         'working_days_per_year': working_days_per_year or get_working_days_per_year()
     }
 
+def _parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {'true', '1', 'yes', 'y'}
+
+def _parse_number(value):
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+def _saas_tier_name(annual_orders):
+    try:
+        orders = float(annual_orders)
+    except Exception:
+        orders = 0
+    if orders <= 0:
+        return ''
+    if orders < 5000:
+        return 'Starter Tier'
+    if orders < 15000:
+        return 'Growth Tier'
+    if orders < 35000:
+        return 'Pro Tier'
+    if orders < 50000:
+        return 'Scale Tier'
+    return 'Enterprise Tier'
+
+def _effective_orders(annual_orders, comment_sold, ebay, live_selling):
+    adjusted = annual_orders
+    if comment_sold:
+        adjusted *= 0.6
+    if ebay:
+        adjusted *= 0.6 if live_selling else 0.95
+    return adjusted
+
 def default_included_services(services):
     if not services:
         return []

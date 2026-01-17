@@ -237,13 +237,23 @@
       <p class="modal-subtitle">Estimated Total Based On Your Inputs</p>
         <div class="deal-size-output">
           <div class="deal-size-pill" id="deal-size-result">$--</div>
-          <button class="button button-secondary button-compact deal-size-copy" type="button" id="deal-size-copy" aria-label="Copy deal size" title="Copy">⧉</button>
+          <button class="deal-size-copy" type="button" id="deal-size-copy" aria-label="Copy deal size" title="Copy">⧉</button>
         </div>
         <div class="modal-actions deal-size-actions">
-          <button class="button button-secondary" type="button" id="deal-size-home">Return To Home</button>
-          <button class="button button-secondary" type="button" id="deal-size-close">Close</button>
+          <button class="button button-secondary button-compact" type="button" id="deal-size-close">Cancel</button>
+          <button class="button button-secondary button-compact" type="button" id="deal-size-home">Save And Return Home</button>
         </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay is-hidden" id="deal-size-alert">
+    <div class="modal-card deal-size-alert-card">
+      <div class="modal-title">Please Check Your Inputs</div>
+      <p class="modal-subtitle" id="deal-size-alert-text">Please Fill All Required Fields</p>
+      <div class="modal-actions deal-size-alert-actions">
+        <button class="button button-secondary" type="button" id="deal-size-alert-close">Close</button>
       </div>
+    </div>
   </div>
 
   <script>
@@ -279,6 +289,9 @@
     const dealSizeClose = document.getElementById('deal-size-close');
     const dealSizeCopy = document.getElementById('deal-size-copy');
     const dealSizeHome = document.getElementById('deal-size-home');
+    const dealSizeAlert = document.getElementById('deal-size-alert');
+    const dealSizeAlertText = document.getElementById('deal-size-alert-text');
+    const dealSizeAlertClose = document.getElementById('deal-size-alert-close');
 
     const dealSaasFeeInput = document.getElementById('deal-saas-fee');
     const dealSaasTierLabel = document.getElementById('deal-saas-tier');
@@ -402,7 +415,7 @@
 
     let manualSaasFee = false;
 
-    function updateSizing() {
+    function computeSizingData() {
       const annualOrders = toNumber(annualOrdersInput.value);
       const commentSold = commentSoldToggle.checked;
       const ebay = ebayToggle.checked;
@@ -438,20 +451,50 @@
       const saasTier = saasTierForOrders(annualOrders);
       const autoSaas = saasTier.fee;
       const monthlySaas = manualSaasFee ? toNumber(dealSaasFeeInput.value) : autoSaas;
-      if (dealSaasTierLabel) {
-        dealSaasTierLabel.textContent = saasTier.tier;
-      }
       const perLabelFee = toNumber(dealPerLabelFeeInput.value);
       const feeOrderPct = toNumber(dealFeeOrderPctInput.value) / 100;
       const labelFeeTotal = perLabelFee * feeOrderPct * annualOrders;
       const totalSize = totalSpread + monthlySaas + labelFeeTotal;
-      latestTotalSize = totalSize;
 
-      carrierSpreadEl.textContent = formatCurrency(totalSpread);
-      adjustedOrdersEl.textContent = formatNumber(adjustedOrders);
+      return {
+        annualOrders,
+        adjustedOrders,
+        attachRate,
+        monthlySaas,
+        saasTier,
+        perLabelFee,
+        feeOrderPct,
+        totalSpread,
+        totalSize,
+        pctUsps,
+        pctUps,
+        pctFedex,
+        pctAmazon,
+        pctUniUni,
+        upsAvgLabel,
+        fedexSpread,
+        amazonSpread,
+        uniuniSpread,
+        uspsSize,
+        upsSize,
+        fedexSize,
+        amazonSize,
+        uniuniSize
+      };
+    }
 
+    function updateSizing() {
+      const sizing = computeSizingData();
+      latestTotalSize = sizing.totalSize;
+
+      carrierSpreadEl.textContent = formatCurrency(sizing.totalSpread);
+      adjustedOrdersEl.textContent = formatNumber(sizing.adjustedOrders);
+
+      if (dealSaasTierLabel) {
+        dealSaasTierLabel.textContent = sizing.saasTier.tier;
+      }
       if (dealSaasFeeInput && !manualSaasFee) {
-        dealSaasFeeInput.value = Number.isFinite(monthlySaas) ? monthlySaas.toFixed(0) : '';
+        dealSaasFeeInput.value = Number.isFinite(sizing.monthlySaas) ? sizing.monthlySaas.toFixed(0) : '';
       }
     }
 
@@ -491,24 +534,83 @@
       window.location.href = '/';
     });
 
-    document.getElementById('calculate-deal').addEventListener('click', () => {
+    document.getElementById('calculate-deal').addEventListener('click', async () => {
       const annualOrders = toNumber(annualOrdersInput.value);
       if (!validateRequiredFields()) {
-        alert('Please Fill All Required Fields');
+        if (dealSizeAlertText) {
+          dealSizeAlertText.textContent = 'Please Fill All Required Fields';
+        }
+        dealSizeAlert.classList.remove('is-hidden');
         return;
       }
       if (!annualOrders) {
-        alert('Annual Orders Is Required');
+        if (dealSizeAlertText) {
+          dealSizeAlertText.textContent = 'Annual Orders Is Required';
+        }
+        dealSizeAlert.classList.remove('is-hidden');
         return;
       }
       const attachRate = toNumber(attachRateInput.value || 85);
       const requiresUpload = Number.isFinite(attachRate) && attachRate > 85;
       if (requiresUpload && !attachUpload.files.length) {
-        alert('Upload A Screenshot Of Redo Usage Dashboard');
+        if (dealSizeAlertText) {
+          dealSizeAlertText.textContent = 'Upload A Screenshot Of Redo Usage Dashboard';
+        }
+        dealSizeAlert.classList.remove('is-hidden');
         return;
       }
       if (dealSizeResult) {
         dealSizeResult.textContent = formatCurrency(latestTotalSize);
+      }
+      const sizing = computeSizingData();
+      const payload = {
+        merchant: merchantInput.value.trim(),
+        se_ae_on_deal: seAeOnDealInput.value.trim(),
+        annual_orders: sizing.annualOrders,
+        pct_usps: selectedCarriers.has('USPS') ? pctUspsInput.value : '',
+        pct_fedex: selectedCarriers.has('FedEx') ? pctFedexInput.value : '',
+        pct_ups: selectedCarriers.has('UPS') ? pctUpsInput.value : '',
+        pct_amazon: selectedCarriers.has('Amazon') ? pctAmazonInput.value : '',
+        pct_uniuni: selectedCarriers.has('UniUni') ? pctUniUniInput.value : '',
+        ups_avg_label_cost: selectedCarriers.has('UPS') ? upsAvgLabelInput.value : '',
+        fedex_actual_spread: selectedCarriers.has('FedEx') ? fedexSpreadInput.value : '',
+        amazon_actual_spread: selectedCarriers.has('Amazon') ? amazonSpreadInput.value : '',
+        uniuni_actual_spread: selectedCarriers.has('UniUni') ? uniuniSpreadInput.value : '',
+        attach_rate: sizing.attachRate,
+        per_label_fee: sizing.perLabelFee,
+        fee_order_pct: sizing.feeOrderPct * 100,
+        commentsold: commentSoldToggle.checked,
+        ebay: ebayToggle.checked,
+        live_selling: liveSellingToggle.checked,
+        printing: printingToggle.checked,
+        monthly_saas: sizing.monthlySaas,
+        usps_size: sizing.uspsSize,
+        fedex_size: sizing.fedexSize,
+        ups_size: sizing.upsSize,
+        amazon_size: sizing.amazonSize,
+        uniuni_size: sizing.uniuniSize,
+        total_size: sizing.totalSize
+      };
+      try {
+        const response = await fetch('/api/deal-sizing-standalone', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (result.error) {
+          if (dealSizeAlertText) {
+            dealSizeAlertText.textContent = result.error;
+          }
+          dealSizeAlert.classList.remove('is-hidden');
+          return;
+        }
+      } catch (err) {
+        if (dealSizeAlertText) {
+          dealSizeAlertText.textContent = 'Unable To Save Deal Sizing Entry';
+        }
+        dealSizeAlert.classList.remove('is-hidden');
+        return;
       }
       if (dealSizeModal) {
         dealSizeModal.classList.remove('is-hidden');
@@ -520,6 +622,14 @@
       dealSizeModal.addEventListener('click', (event) => {
         if (event.target === dealSizeModal) {
           dealSizeModal.classList.add('is-hidden');
+        }
+      });
+    }
+    if (dealSizeAlert && dealSizeAlertClose) {
+      dealSizeAlertClose.addEventListener('click', () => dealSizeAlert.classList.add('is-hidden'));
+      dealSizeAlert.addEventListener('click', (event) => {
+        if (event.target === dealSizeAlert) {
+          dealSizeAlert.classList.add('is-hidden');
         }
       });
     }
