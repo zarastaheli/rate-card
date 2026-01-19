@@ -9,6 +9,7 @@ import math
 import zipfile
 import urllib.request
 import urllib.parse
+import hashlib
 from io import BytesIO
 import tempfile
 import threading
@@ -2076,127 +2077,160 @@ def _summary_cache_path(job_dir):
 def _selection_cache_key(selected_dashboard):
     return '|'.join(sorted(selected_dashboard))
 
-def _dashboard_cache_sheet_name():
-    return 'Dashboard Cache'
+def _compute_source_hash(file_path):
+    """Compute SHA256 hash of a file for cache invalidation."""
+    if not file_path or not Path(file_path).exists():
+        return None
+    sha = hashlib.sha256()
+    with open(file_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            sha.update(chunk)
+    return sha.hexdigest()[:16]
 
-def _dashboard_cache_version():
-    return 2
+def _read_dashboard_cache(job_dir):
+    """Read pre-computed dashboard cache from JSON files."""
+    breakdown_path = _cache_path_for_job(Path(job_dir))
+    summary_path = _summary_cache_path(Path(job_dir))
+    result = {'breakdown': {}, 'summary': {}, 'source_hash': None, 'ready': False}
+    if breakdown_path.exists():
+        try:
+            with open(breakdown_path, 'r') as f:
+                data = json.load(f)
+                result['breakdown'] = data.get('carriers', {})
+                result['source_hash'] = data.get('source_hash')
+                result['ready'] = True
+        except Exception:
+            pass
+    if summary_path.exists():
+        try:
+            with open(summary_path, 'r') as f:
+                result['summary'] = json.load(f)
+        except Exception:
+            pass
+    return result
 
-def _fast_cache_path(job_dir):
-    return Path(job_dir) / 'dashboard_metrics_cache.json'
+def _write_dashboard_cache(job_dir, breakdown, summary, source_hash):
+    """Write pre-computed dashboard cache to JSON files."""
+    breakdown_path = _cache_path_for_job(Path(job_dir))
+    summary_path = _summary_cache_path(Path(job_dir))
+    with open(breakdown_path, 'w') as f:
+        json.dump({'carriers': breakdown, 'source_hash': source_hash}, f)
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f)
 
-def _read_dashboard_cache_fast(job_dir):
-    cache_path = _fast_cache_path(job_dir)
-    if not cache_path.exists():
-        return {}
-    try:
-        with open(cache_path, 'r') as f:
-            return json.load(f)
-    except Exception:
-        return {}
+def _is_cache_valid(job_dir, current_hash):
+    """Check if cache is valid based on source hash."""
+    cache = _read_dashboard_cache(job_dir)
+    return cache.get('source_hash') == current_hash and cache.get('ready')
 
-def _write_dashboard_cache_fast(job_dir, key, metrics):
-    cache_path = _fast_cache_path(job_dir)
-    cache = _read_dashboard_cache_fast(job_dir)
-    cache[key] = metrics
-    with open(cache_path, 'w') as f:
-        json.dump(cache, f)
-
-def _read_dashboard_cache(rate_card_path):
-    if not rate_card_path or not Path(rate_card_path).exists():
+def _aggregate_metrics_from_carriers(carrier_metrics, selected_carriers):
+    """Aggregate overall metrics from per-carrier metrics (fast, no Excel)."""
+    if not carrier_metrics or not selected_carriers:
         return {}
-    try:
-        wb = openpyxl.load_workbook(rate_card_path, data_only=True, read_only=True)
-    except Exception:
-        return {}
-    if _dashboard_cache_sheet_name() not in wb.sheetnames:
-        wb.close()
-        return {}
-    ws = wb[_dashboard_cache_sheet_name()]
-    rows = ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True)
-    header_row = next(rows, None)
-    if not header_row:
-        wb.close()
-        return {}
-    headers = [str(h or '').strip() for h in header_row]
-    if 'Cache Version' not in headers:
-        wb.close()
-        return {}
-    header_index = {name: idx for idx, name in enumerate(headers)}
-    selection_idx = header_index.get('Selection Key')
-    if selection_idx is None:
-        wb.close()
-        return {}
-    version_idx = header_index.get('Cache Version')
-    cache = {}
-    for row in rows:
-        if not row:
+    
+    total_savings = 0.0
+    total_spread = 0.0
+    total_deal_size = 0.0
+    win_pcts = []
+    spread_pcts = []
+    
+    for carrier in selected_carriers:
+        cm = carrier_metrics.get(carrier, {})
+        if not cm:
             continue
-        selection_key = row[selection_idx]
-        if not selection_key:
-            continue
-        if version_idx is not None:
-            row_version = row[version_idx]
-            if row_version != _dashboard_cache_version():
-                continue
-        metrics = {
-            'Est. Merchant Annual Savings': row[header_index.get('Est. Merchant Annual Savings', -1)] if header_index.get('Est. Merchant Annual Savings') is not None else None,
-            'Est. Redo Deal Size': row[header_index.get('Est. Redo Deal Size', -1)] if header_index.get('Est. Redo Deal Size') is not None else None,
-            'Spread Available': row[header_index.get('Spread Available', -1)] if header_index.get('Spread Available') is not None else None,
-            '% Orders We Could Win': row[header_index.get('% Orders We Could Win', -1)] if header_index.get('% Orders We Could Win') is not None else None,
-            '% Orders Won W/ Spread': row[header_index.get('% Orders Won W/ Spread', -1)] if header_index.get('% Orders Won W/ Spread') is not None else None
-        }
-        cache[str(selection_key)] = metrics
-    wb.close()
-    return cache
+        savings = cm.get('Est. Merchant Annual Savings')
+        spread = cm.get('Spread Available')
+        deal = cm.get('Est. Redo Deal Size')
+        win_pct = cm.get('% Orders We Could Win')
+        spread_pct = cm.get('% Orders Won W/ Spread')
+        
+        if savings is not None:
+            total_savings += float(savings)
+        if spread is not None:
+            total_spread += float(spread)
+        if deal is not None:
+            total_deal_size += float(deal)
+        if win_pct is not None:
+            win_pcts.append(float(win_pct))
+        if spread_pct is not None:
+            spread_pcts.append(float(spread_pct))
+    
+    return {
+        'Est. Merchant Annual Savings': total_savings if total_savings else None,
+        'Est. Redo Deal Size': total_deal_size if total_deal_size else None,
+        'Spread Available': total_spread if total_spread else None,
+        '% Orders We Could Win': max(win_pcts) if win_pcts else None,
+        '% Orders Won W/ Spread': max(spread_pcts) if spread_pcts else None
+    }
 
-def _ensure_dashboard_cache_sheet(wb):
-    sheet_name = _dashboard_cache_sheet_name()
-    if sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-    else:
-        ws = wb.create_sheet(sheet_name)
-    headers = [
-        'Selection Key',
-        'Est. Merchant Annual Savings',
-        'Est. Redo Deal Size',
-        'Spread Available',
-        '% Orders We Could Win',
-        '% Orders Won W/ Spread',
-        'Cache Version'
-    ]
-    if ws.max_row < 1:
-        ws.append(headers)
-    else:
-        existing = [str(cell.value or '').strip() for cell in ws[1]]
-        if existing[:len(headers)] != headers:
-            ws.delete_rows(1, ws.max_row)
-            ws.append(headers)
-    return ws
+background_cache_jobs = {}
+background_cache_jobs_lock = threading.Lock()
+CACHE_COMPUTATION_TIMEOUT = 120
 
-def _write_dashboard_cache_entry(rate_card_path, selection_key, metrics):
-    if not rate_card_path or not Path(rate_card_path).exists():
-        return
-    wb = _load_workbook_with_retry(rate_card_path, data_only=False)
-    ws = _ensure_dashboard_cache_sheet(wb)
-    selection_key = str(selection_key)
-    selection_row = None
-    for row_idx in range(2, ws.max_row + 1):
-        cell_value = ws.cell(row=row_idx, column=1).value
-        if str(cell_value or '') == selection_key:
-            selection_row = row_idx
-            break
-    if selection_row is None:
-        selection_row = ws.max_row + 1
-    ws.cell(row=selection_row, column=1, value=selection_key)
-    ws.cell(row=selection_row, column=2, value=metrics.get('Est. Merchant Annual Savings'))
-    ws.cell(row=selection_row, column=3, value=metrics.get('Est. Redo Deal Size'))
-    ws.cell(row=selection_row, column=4, value=metrics.get('Spread Available'))
-    ws.cell(row=selection_row, column=5, value=metrics.get('% Orders We Could Win'))
-    ws.cell(row=selection_row, column=6, value=metrics.get('% Orders Won W/ Spread'))
-    ws.cell(row=selection_row, column=7, value=_dashboard_cache_version())
-    wb.save(rate_card_path)
-    wb.close()
+def _start_background_cache_job(job_dir, mapping_config, redo_config):
+    """Start background job to compute dashboard cache with timeout."""
+    job_key = str(job_dir)
+    with background_cache_jobs_lock:
+        if job_key in background_cache_jobs:
+            return
+        background_cache_jobs[job_key] = {'status': 'running', 'started_at': time.time()}
+    
+    def compute():
+        try:
+            _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=CACHE_COMPUTATION_TIMEOUT)
+            with background_cache_jobs_lock:
+                if job_key in background_cache_jobs:
+                    background_cache_jobs[job_key]['status'] = 'done'
+        except Exception as e:
+            with background_cache_jobs_lock:
+                if job_key in background_cache_jobs:
+                    background_cache_jobs[job_key]['status'] = 'failed'
+                    background_cache_jobs[job_key]['error'] = str(e)
+        finally:
+            with background_cache_jobs_lock:
+                background_cache_jobs.pop(job_key, None)
+    
+    thread = threading.Thread(target=compute, daemon=True)
+    thread.start()
+
+def _get_background_cache_status(job_dir):
+    """Check status of background cache computation."""
+    job_key = str(job_dir)
+    with background_cache_jobs_lock:
+        job = background_cache_jobs.get(job_key)
+        if not job:
+            return None
+        elapsed = time.time() - job.get('started_at', time.time())
+        if elapsed > CACHE_COMPUTATION_TIMEOUT:
+            background_cache_jobs.pop(job_key, None)
+            return {'status': 'timeout', 'error': 'Cache computation timed out'}
+        return job
+    return None
+
+def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=None):
+    """Pre-compute all dashboard metrics and save to JSON cache."""
+    job_dir = Path(job_dir)
+    rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+    if not rate_card_files:
+        return False
+    
+    source_hash = _compute_source_hash(rate_card_files[0])
+    selected_redo = redo_config.get('selected_carriers', [])
+    selected_dashboard = _dashboard_selected_from_redo(selected_redo)
+    available_carriers = list(DASHBOARD_CARRIERS)
+    
+    carrier_metrics = {}
+    for carrier in available_carriers:
+        metrics = _calculate_metrics_fast(job_dir, [carrier], mapping_config)
+        if metrics:
+            carrier_metrics[carrier] = metrics
+    
+    summary_by_selection = {}
+    default_key = _selection_cache_key(list(selected_dashboard))
+    summary_by_selection[default_key] = _aggregate_metrics_from_carriers(carrier_metrics, list(selected_dashboard))
+    
+    _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, source_hash)
+    return True
 
 def _summary_job_key(job_dir, source_mtime, selection_key):
     return f"{job_dir.name}:{source_mtime}:{selection_key}"
@@ -4909,32 +4943,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     finally:
         wb.close()
     
-    # Pre-compute dashboard metrics using fast calculation to avoid slow Excel loading later
+    # Pre-compute dashboard metrics and save to JSON cache (fast, no Excel re-load needed)
     try:
-        selected_redo = redo_config.get('selected_carriers', [])
-        selected_dashboard = _dashboard_selected_from_redo(selected_redo)
-        available_carriers = list(DASHBOARD_CARRIERS)
-        
-        # Pre-compute metrics for overall selection and each carrier using fast method
-        precomputed_cache = {}
-        selection_key = _selection_cache_key(list(selected_dashboard))
-        
-        # Try fast calculation first
-        fast_metrics = _calculate_metrics_fast(job_dir, list(selected_dashboard), mapping_config)
-        if fast_metrics:
-            precomputed_cache[f"selection:{selection_key}"] = fast_metrics
-        
-        # Pre-compute for each carrier
-        for carrier in available_carriers:
-            carrier_metrics = _calculate_metrics_fast(job_dir, [carrier], mapping_config)
-            if carrier_metrics:
-                precomputed_cache[f"carrier:{carrier}"] = carrier_metrics
-        
-        # Save precomputed metrics to JSON cache
-        if precomputed_cache:
-            cache_path = _fast_cache_path(job_dir)
-            with open(cache_path, 'w') as f:
-                json.dump(precomputed_cache, f)
+        _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
     except Exception:
         pass  # Don't fail rate card generation if pre-computation fails
     
@@ -5005,46 +5016,39 @@ def status(job_id=None):
 
 @app.route('/api/dashboard/<job_id>', methods=['GET', 'POST'])
 def dashboard_data(job_id):
-    """Return dashboard metrics for overall and per-carrier selections."""
+    """Return dashboard metrics - fast JSON read only, no Excel loading."""
     try:
         job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
         if not job_dir.exists():
             return jsonify({'error': 'Job not found'}), 404
+        
         mapping_file = job_dir / 'mapping.json'
         mapping_config = {}
         if mapping_file.exists():
             with open(mapping_file, 'r') as f:
                 mapping_config = json.load(f)
+        
+        redo_file = job_dir / 'redo_carriers.json'
+        redo_config = {}
+        if redo_file.exists():
+            with open(redo_file, 'r') as f:
+                redo_config = json.load(f)
+        
         annual_orders_missing = _annual_orders_missing(mapping_config)
         pct_off, dollar_off = _usps_market_discount_values(mapping_config)
+        
         rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
         if not rate_card_files:
             return jsonify({'error': 'Rate card not found'}), 404
-        source_mtime = int(rate_card_files[0].stat().st_mtime)
+        
+        current_hash = _compute_source_hash(rate_card_files[0])
+        
         refresh = request.args.get('refresh') == '1'
         if refresh:
-            summary_cache = _summary_cache_path(job_dir)
-            breakdown_cache = _cache_path_for_job(job_dir)
-            carrier_details_cache = _carrier_details_cache_path(job_dir)
-            fast_cache = _fast_cache_path(job_dir)
-            if summary_cache.exists():
-                summary_cache.unlink()
-            if breakdown_cache.exists():
-                breakdown_cache.unlink()
-            if carrier_details_cache.exists():
-                carrier_details_cache.unlink()
-            if fast_cache.exists():
-                fast_cache.unlink()
-            job_prefix = f"{job_dir.name}:"
-            with summary_jobs_lock:
-                for key in list(summary_jobs.keys()):
-                    if key.startswith(job_prefix):
-                        summary_jobs.pop(key, None)
-            with dashboard_jobs_lock:
-                for key in list(dashboard_jobs.keys()):
-                    if key.startswith(job_prefix):
-                        dashboard_jobs.pop(key, None)
-
+            for cache_file in [_summary_cache_path(job_dir), _cache_path_for_job(job_dir), _carrier_details_cache_path(job_dir)]:
+                if cache_file.exists():
+                    cache_file.unlink()
+        
         eligibility = None
         if mapping_config:
             eligibility = compute_eligibility(
@@ -5059,13 +5063,8 @@ def dashboard_data(job_id):
         if eligibility and not eligibility['uniuni_eligible_final']:
             available_carriers = [c for c in available_carriers if c != 'UniUni']
 
-        redo_selected = []
-        redo_file = job_dir / 'redo_carriers.json'
-        if redo_file.exists():
-            with open(redo_file, 'r') as f:
-                redo_config = json.load(f)
-                redo_selected = redo_config.get('selected_carriers', [])
-        else:
+        redo_selected = redo_config.get('selected_carriers', [])
+        if not redo_selected:
             redo_selected = list(REDO_FORCED_ON)
             if eligibility and eligibility['amazon_eligible_final']:
                 redo_selected.append('Amazon')
@@ -5074,76 +5073,97 @@ def dashboard_data(job_id):
 
         selected_set = _dashboard_selected_from_redo(redo_selected)
         selected_dashboard = [c for c in available_carriers if c in selected_set]
-        show_usps_market_discount = bool(
-            (eligibility and (eligibility['amazon_eligible_final'] or eligibility['uniuni_eligible_final']))
-            or ('Amazon' in redo_selected or 'UniUni' in redo_selected)
-        )
-        carrier_percentages = _carrier_distribution(job_dir, mapping_config, available_carriers)
+        
         if request.method == 'POST':
             data = request.json or {}
             incoming = data.get('selected_carriers', [])
             if isinstance(incoming, list) and incoming:
                 selected_dashboard = [c for c in available_carriers if c in incoming]
 
-        per_carrier = []
+        show_usps_market_discount = bool(
+            (eligibility and (eligibility['amazon_eligible_final'] or eligibility['uniuni_eligible_final']))
+            or ('Amazon' in redo_selected or 'UniUni' in redo_selected)
+        )
+        carrier_percentages = _carrier_distribution(job_dir, mapping_config, available_carriers)
+        
+        cache = _read_dashboard_cache(job_dir)
+        cache_valid = cache.get('ready') and cache.get('source_hash') == current_hash
+        
+        if not cache_valid:
+            bg_status = _get_background_cache_status(job_dir)
+            if bg_status and bg_status.get('status') == 'running':
+                return jsonify({
+                    'pending': True,
+                    'selected_carriers': selected_dashboard,
+                    'available_carriers': available_carriers,
+                    'annual_orders_missing': annual_orders_missing,
+                    'show_usps_market_discount': show_usps_market_discount,
+                    'usps_market_pct_off': pct_off,
+                    'usps_market_dollar_off': dollar_off,
+                    'carrier_percentages': carrier_percentages
+                })
+            elif bg_status and bg_status.get('status') == 'failed':
+                return jsonify({
+                    'error': f"Cache computation failed: {bg_status.get('error', 'Unknown error')}",
+                    'pending': False
+                }), 500
+            else:
+                _start_background_cache_job(job_dir, mapping_config, redo_config)
+                return jsonify({
+                    'pending': True,
+                    'selected_carriers': selected_dashboard,
+                    'available_carriers': available_carriers,
+                    'annual_orders_missing': annual_orders_missing,
+                    'show_usps_market_discount': show_usps_market_discount,
+                    'usps_market_pct_off': pct_off,
+                    'usps_market_dollar_off': dollar_off,
+                    'carrier_percentages': carrier_percentages
+                })
+        
+        carrier_metrics = cache.get('breakdown', {})
+        summary_cache = cache.get('summary', {})
+        
         include_per_carrier = request.args.get('per_carrier') == '1'
-        if request.method == 'GET' and include_per_carrier:
-            selection_key = _selection_cache_key(selected_dashboard)
-            carriers_for_breakdown = selected_dashboard or available_carriers
-            cache = _read_dashboard_cache_fast(job_dir)
-            per_carrier = []
-            pending = False
-            for carrier in carriers_for_breakdown:
-                cache_key = f"carrier:{carrier}"
-                metrics = cache.get(cache_key)
-                if metrics is None:
-                    metrics = _calculate_metrics_from_formulas(rate_card_files[0], [carrier])
-                    _write_dashboard_cache_fast(job_dir, cache_key, metrics)
+        per_carrier = []
+        if include_per_carrier:
+            for carrier in selected_dashboard or available_carriers:
+                metrics = carrier_metrics.get(carrier, {})
+                if annual_orders_missing:
+                    metrics = {k: v for k, v in metrics.items() if k not in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available')}
                 per_carrier.append({'carrier': carrier, 'metrics': metrics})
-            per_carrier_count = len(per_carrier)
-            if annual_orders_missing:
-                for entry in per_carrier:
-                    metrics = entry.get('metrics') or {}
-                    for key in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available'):
-                        metrics.pop(key, None)
-                    entry['metrics'] = metrics
+            
             return jsonify({
                 'selected_carriers': selected_dashboard,
                 'available_carriers': available_carriers,
                 'per_carrier': per_carrier,
-                'pending': pending,
+                'pending': False,
                 'summary_pending': False,
-                'per_carrier_count': per_carrier_count,
+                'per_carrier_count': len(per_carrier),
                 'annual_orders_missing': annual_orders_missing,
                 'show_usps_market_discount': show_usps_market_discount,
                 'usps_market_pct_off': pct_off,
                 'usps_market_dollar_off': dollar_off,
                 'carrier_percentages': carrier_percentages,
-                'per_carrier_total': len(carriers_for_breakdown)
+                'per_carrier_total': len(selected_dashboard or available_carriers)
             })
-
+        
         selection_key = _selection_cache_key(selected_dashboard)
-        cache = _read_dashboard_cache_fast(job_dir)
-        overall_metrics = cache.get(f"selection:{selection_key}")
-        summary_pending = False
-        if overall_metrics is None:
-            overall_metrics = _calculate_metrics_from_formulas(rate_card_files[0], selected_dashboard)
-            _write_dashboard_cache_fast(job_dir, f"selection:{selection_key}", overall_metrics)
+        overall_metrics = summary_cache.get(selection_key)
+        
+        if not overall_metrics:
+            overall_metrics = _aggregate_metrics_from_carriers(carrier_metrics, selected_dashboard)
+        
         if annual_orders_missing:
-            overall_metrics = {**(overall_metrics or {})}
-            for key in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available'):
-                overall_metrics.pop(key, None)
+            overall_metrics = {k: v for k, v in (overall_metrics or {}).items() 
+                            if k not in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available')}
 
         return jsonify({
             'selected_carriers': selected_dashboard,
             'available_carriers': available_carriers,
             'overall': overall_metrics,
-            'per_carrier': [
-                entry for entry in (per_carrier or [])
-                if entry.get('carrier') in available_carriers
-            ],
+            'per_carrier': [],
             'pending': False,
-            'summary_pending': summary_pending,
+            'summary_pending': False,
             'annual_orders_missing': annual_orders_missing,
             'show_usps_market_discount': show_usps_market_discount,
             'usps_market_pct_off': pct_off,
