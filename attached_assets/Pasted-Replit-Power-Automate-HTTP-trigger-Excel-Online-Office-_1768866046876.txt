@@ -1,0 +1,153 @@
+Replit ➜ Power Automate (HTTP trigger) ➜ Excel Online (Office Script runs + recalcs) ➜ returns JSON ➜ Replit dashboard
+
+This uses Excel as the calculation engine, so your formula results match what you see in Excel. Power Automate is the supported way to run Office Scripts headlessly and get return values.
+
+1) Put your workbook in OneDrive/SharePoint
+
+Save the workbook in OneDrive for Business (or SharePoint library).
+
+Make sure your calculated sheet formulas work when you manually edit inputs.
+
+2) Create the Office Script (in Excel on the web)
+
+In Excel Online:
+
+Automate tab → New Script
+
+Paste this (edit sheet names, starting cell, and output addresses):
+
+function main(
+  workbook: ExcelScript.Workbook,
+  payload: {
+    data: (string | number | boolean)[][], // dataset rows
+    dataStartCell: string,                 // e.g. "Input!A2"
+    toggles: { address: string, value: string | number | boolean }[],
+    outputs: string[]                      // e.g. ["Calc!H12","Calc!H13"]
+  }
+) {
+  // Write dataset
+  const startRange = workbook.getRange(payload.dataStartCell);
+  const rows = payload.data.length;
+  const cols = payload.data[0]?.length ?? 0;
+  if (rows === 0 || cols === 0) throw new Error("payload.data is empty");
+
+  const writeRange = startRange.getResizedRange(rows - 1, cols - 1);
+  writeRange.setValues(payload.data);
+
+  // Apply toggles
+  for (const t of payload.toggles) {
+    workbook.getRange(t.address).setValue(t.value);
+  }
+
+  // Force recalculation
+  workbook.getApplication().calculate(ExcelScript.CalculationType.full);
+
+  // Read outputs
+  const result: Record<string, string | number | boolean> = {};
+  for (const addr of payload.outputs) {
+    result[addr] = workbook.getRange(addr).getValue();
+  }
+
+  return result;
+}
+
+
+Office Scripts can return values that Power Automate exposes as “result”.
+
+3) Create a Power Automate flow (this is your API)
+
+In Power Automate:
+
+Create → Instant cloud flow
+
+Trigger: When an HTTP request is received
+
+Add action: Excel Online (Business) → Run script (or “Run script from SharePoint library”)
+
+Location: OneDrive/SharePoint
+
+File: your workbook
+
+Script: the script you created
+
+Script parameters: pass the trigger body fields into the script
+
+Add action: Response
+
+Body: the “result” output from “Run script”
+
+Now you have a URL (the HTTP trigger endpoint). That is what Replit calls.
+
+4) Replit code to call it (drop-in Node/Express)
+
+Create index.js:
+
+import express from "express";
+
+const app = express();
+app.use(express.json({ limit: "5mb" })); // raise if needed
+
+const FLOW_URL = process.env.POWER_AUTOMATE_URL; // set in Replit Secrets
+
+app.post("/recalc", async (req, res) => {
+  // Expecting req.body to already be the payload structure (see example below)
+  try {
+    const r = await fetch(FLOW_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body),
+    });
+
+    if (!r.ok) {
+      const text = await r.text();
+      return res.status(500).json({ error: "Flow call failed", status: r.status, detail: text });
+    }
+
+    const data = await r.json(); // this should be the script return (your outputs object)
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+app.listen(3000, () => console.log("Listening on :3000"));
+
+
+In Replit:
+
+Secrets: set POWER_AUTOMATE_URL to the Flow’s HTTP endpoint.
+
+Your dashboard calls POST /recalc.
+
+Example request body you send from your dashboard
+{
+  "dataStartCell": "Input!A2",
+  "data": [
+    ["SKU1", 10, true],
+    ["SKU2", 25, false]
+  ],
+  "toggles": [
+    { "address": "Inputs!B2", "value": "ScenarioA" },
+    { "address": "Inputs!B3", "value": 1 }
+  ],
+  "outputs": ["Calc!H12", "Calc!H13", "Calc!M2"]
+}
+
+
+The response will look like:
+
+{
+  "Calc!H12": 123.45,
+  "Calc!H13": 999,
+  "Calc!M2": "OK"
+}
+
+Common “it still doesn’t change values” fixes
+
+Ensure outputs are real cell values (not a chart label or something).
+
+Avoid circular references unless Excel is configured to allow iterative calc.
+
+Minimize volatile functions (NOW, TODAY, INDIRECT, OFFSET) if recalcs are slow.
+
+Make your toggles only change input cells (don’t rely on UI features like filters).

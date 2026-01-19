@@ -10,6 +10,7 @@ import zipfile
 import urllib.request
 import urllib.parse
 import hashlib
+import requests
 from io import BytesIO
 import tempfile
 import threading
@@ -2231,7 +2232,104 @@ def _aggregate_metrics_from_carriers(carrier_metrics, selected_carriers):
 
 background_cache_jobs = {}
 background_cache_jobs_lock = threading.Lock()
-CACHE_COMPUTATION_TIMEOUT = 120
+CACHE_COMPUTATION_TIMEOUT = 900  # 15 minutes for LibreOffice recalculation per carrier
+
+POWER_AUTOMATE_URL = os.environ.get('POWER_AUTOMATE_URL', '')
+
+def _call_power_automate(toggles=None, outputs=None, timeout=30):
+    """Call Power Automate to recalculate Excel and read cell values.
+    
+    Args:
+        toggles: List of dicts with 'address' and 'value' keys for cells to modify
+        outputs: List of cell addresses to read (e.g. ["'Pricing & Summary'!C5"])
+        timeout: Request timeout in seconds
+    
+    Returns:
+        Dict mapping cell addresses to their values, or None on error
+    """
+    if not POWER_AUTOMATE_URL:
+        app.logger.warning("POWER_AUTOMATE_URL not configured")
+        return None
+    
+    payload = {
+        'toggles': toggles or [],
+        'outputs': outputs or []
+    }
+    
+    try:
+        app.logger.info(f"Calling Power Automate with {len(outputs or [])} outputs")
+        response = requests.post(
+            POWER_AUTOMATE_URL,
+            json=payload,
+            headers={'Content-Type': 'application/json'},
+            timeout=timeout
+        )
+        
+        if not response.ok:
+            app.logger.error(f"Power Automate returned {response.status_code}: {response.text[:500]}")
+            return None
+        
+        result = response.json()
+        app.logger.info(f"Power Automate returned: {result}")
+        return result
+    except requests.Timeout:
+        app.logger.error("Power Automate request timed out")
+        return None
+    except Exception as e:
+        app.logger.error(f"Power Automate error: {e}")
+        return None
+
+def _get_dashboard_metrics_via_power_automate(selected_carriers, all_carriers):
+    """Get dashboard metrics by calling Power Automate with carrier toggles.
+    
+    Args:
+        selected_carriers: List of carrier names to enable
+        all_carriers: List of all available carrier names
+    
+    Returns:
+        Dict with metric names as keys and values, or None on error
+    """
+    if not POWER_AUTOMATE_URL:
+        return None
+    
+    selected_set = _redo_selection_from_dashboard(selected_carriers)
+    
+    toggles = []
+    carrier_row_map = {
+        'UNIUNI': 5,
+        'USPS MARKET': 6, 
+        'UPS GROUND': 7,
+        'UPS GROUND SAVER': 8,
+        'FEDEX': 9,
+        'AMAZON': 10
+    }
+    
+    for carrier_name, row in carrier_row_map.items():
+        value = 'Yes' if carrier_name in selected_set else 'No'
+        toggles.append({
+            'address': f"'Pricing & Summary'!F{row}",
+            'value': value
+        })
+    
+    outputs = [
+        "'Pricing & Summary'!C5",
+        "'Pricing & Summary'!C6",
+        "'Pricing & Summary'!C7",
+        "'Pricing & Summary'!C11",
+        "'Pricing & Summary'!C12"
+    ]
+    
+    result = _call_power_automate(toggles=toggles, outputs=outputs, timeout=60)
+    if not result:
+        return None
+    
+    return {
+        'Est. Merchant Annual Savings': result.get("'Pricing & Summary'!C5"),
+        'Est. Redo Deal Size': result.get("'Pricing & Summary'!C6"),
+        'Spread Available': result.get("'Pricing & Summary'!C7"),
+        '% Orders We Could Win': result.get("'Pricing & Summary'!C11"),
+        '% Orders Won W/ Spread': result.get("'Pricing & Summary'!C12")
+    }
 
 def _start_background_cache_job(job_dir, mapping_config, redo_config):
     """Start background job to compute dashboard cache with timeout."""
@@ -2304,7 +2402,7 @@ def _recalculate_excel_with_libreoffice(excel_path, timeout=60):
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-def _toggle_carriers_and_read_metrics(rate_card_path, selected_carriers, all_carriers):
+def _toggle_carriers_and_read_metrics(rate_card_path, selected_carriers, all_carriers, recalc_timeout=180):
     """Toggle carriers in Excel, recalculate, and read metrics from C5/C7/C11/C12."""
     import tempfile
     import shutil
@@ -2338,7 +2436,7 @@ def _toggle_carriers_and_read_metrics(rate_card_path, selected_carriers, all_car
         wb.save(temp_file)
         wb.close()
         
-        if not _recalculate_excel_with_libreoffice(temp_file):
+        if not _recalculate_excel_with_libreoffice(temp_file, timeout=recalc_timeout):
             return {}
         
         wb = _load_workbook_with_retry(temp_file, data_only=True)
@@ -2358,36 +2456,112 @@ def _toggle_carriers_and_read_metrics(rate_card_path, selected_carriers, all_car
         if temp_file.exists():
             temp_file.unlink()
 
+def _read_metrics_from_excel_cells(rate_card_path):
+    """Read metrics directly from Excel cells after LibreOffice recalculation."""
+    try:
+        wb = openpyxl.load_workbook(rate_card_path, data_only=True, read_only=True)
+        if 'Pricing & Summary' not in wb.sheetnames:
+            wb.close()
+            return {}
+        ws = wb['Pricing & Summary']
+        metrics = {
+            'Est. Merchant Annual Savings': ws['C5'].value,
+            'Est. Redo Deal Size': ws['C6'].value,
+            'Spread Available': ws['C7'].value,
+            '% Orders We Could Win': ws['C11'].value,
+            '% Orders Won W/ Spread': ws['C12'].value
+        }
+        wb.close()
+        return {k: v for k, v in metrics.items() if v is not None}
+    except Exception as e:
+        app.logger.error(f"Error reading metrics from Excel: {e}")
+        return {}
+
 def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=None):
-    """Pre-compute all dashboard metrics and save to JSON cache."""
+    """Pre-compute all dashboard metrics using Power Automate (preferred) or LibreOffice fallback."""
     job_dir = Path(job_dir)
     rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
     if not rate_card_files:
         app.logger.error("No rate card file found for precompute")
         return False
     
+    rate_card_path = rate_card_files[0]
     full_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
     selected_redo = redo_config.get('selected_carriers', [])
     selected_dashboard = _dashboard_selected_from_redo(selected_redo)
     available_carriers = list(DASHBOARD_CARRIERS)
     
-    app.logger.info(f"Precomputing dashboard metrics for {len(available_carriers)} carriers")
+    # Try Power Automate first (fast, accurate, uses real Excel)
+    if POWER_AUTOMATE_URL:
+        app.logger.info("Using Power Automate for dashboard metrics (Excel Online calculation)")
+        
+        carrier_metrics = {}
+        for carrier in available_carriers:
+            app.logger.info(f"Computing metrics for {carrier} via Power Automate...")
+            metrics = _get_dashboard_metrics_via_power_automate([carrier], available_carriers)
+            if metrics:
+                carrier_metrics[carrier] = metrics
+                app.logger.info(f"  {carrier}: Spread={metrics.get('Spread Available')}")
+            else:
+                app.logger.warning(f"  {carrier}: Power Automate returned no metrics")
+        
+        app.logger.info(f"Computing summary for selection: {list(selected_dashboard)}")
+        summary_metrics = _get_dashboard_metrics_via_power_automate(list(selected_dashboard), available_carriers)
+        
+        if carrier_metrics and summary_metrics:
+            summary_by_selection = {}
+            default_key = _selection_cache_key(list(selected_dashboard))
+            summary_by_selection[default_key] = summary_metrics
+            app.logger.info(f"Summary metrics: {summary_metrics}")
+            
+            _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, full_hash)
+            app.logger.info("Dashboard metrics cache written successfully (from Power Automate)")
+            return True
+        else:
+            app.logger.warning("Power Automate failed, falling back to LibreOffice")
+    
+    # Fallback to LibreOffice (slower but works without Power Automate)
+    app.logger.info("Using LibreOffice for dashboard metrics (slower fallback)")
+    
+    app.logger.info("Running LibreOffice to recalculate formulas...")
+    recalc_success = _recalculate_excel_with_libreoffice(rate_card_path, timeout=180)
+    if not recalc_success:
+        app.logger.warning("LibreOffice recalc failed, falling back to Python calculation")
+        carrier_metrics = {}
+        for carrier in available_carriers:
+            metrics = _calculate_metrics_fast(job_dir, [carrier], mapping_config)
+            if metrics:
+                carrier_metrics[carrier] = metrics
+        summary_by_selection = {}
+        default_key = _selection_cache_key(list(selected_dashboard))
+        combined_metrics = _calculate_metrics_fast(job_dir, list(selected_dashboard), mapping_config)
+        summary_by_selection[default_key] = combined_metrics if combined_metrics else {}
+        _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, full_hash)
+        return True
+    
+    app.logger.info("LibreOffice recalc complete, reading metrics from Excel cells")
+    
+    overall_metrics = _read_metrics_from_excel_cells(rate_card_path)
+    app.logger.info(f"Overall metrics from Excel: {overall_metrics}")
     
     carrier_metrics = {}
     for carrier in available_carriers:
-        metrics = _calculate_metrics_fast(job_dir, [carrier], mapping_config)
+        app.logger.info(f"Computing metrics for {carrier} via LibreOffice...")
+        metrics = _toggle_carriers_and_read_metrics(rate_card_path, [carrier], available_carriers)
         if metrics:
             carrier_metrics[carrier] = metrics
-            app.logger.info(f"Computed metrics for {carrier}")
+            app.logger.info(f"  {carrier}: Spread={metrics.get('Spread Available')}")
+    
+    app.logger.info(f"Restoring original selection: {list(selected_dashboard)}")
+    summary_metrics = _toggle_carriers_and_read_metrics(rate_card_path, list(selected_dashboard), available_carriers)
     
     summary_by_selection = {}
     default_key = _selection_cache_key(list(selected_dashboard))
-    combined_metrics = _calculate_metrics_fast(job_dir, list(selected_dashboard), mapping_config)
-    summary_by_selection[default_key] = combined_metrics if combined_metrics else {}
-    app.logger.info(f"Computed summary metrics for default selection")
+    summary_by_selection[default_key] = summary_metrics if summary_metrics else overall_metrics
+    app.logger.info(f"Summary metrics: {summary_by_selection[default_key]}")
     
     _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, full_hash)
-    app.logger.info("Dashboard metrics cache written successfully")
+    app.logger.info("Dashboard metrics cache written successfully (from LibreOffice)")
     return True
 
 def _summary_job_key(job_dir, source_mtime, selection_key):
