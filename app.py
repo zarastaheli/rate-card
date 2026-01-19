@@ -2087,36 +2087,72 @@ def _compute_source_hash(file_path):
             sha.update(chunk)
     return sha.hexdigest()[:16]
 
+def _compute_config_hash(mapping_config, redo_config):
+    """Compute hash of config for cache invalidation."""
+    sha = hashlib.sha256()
+    sha.update(json.dumps(mapping_config or {}, sort_keys=True).encode())
+    sha.update(json.dumps(redo_config or {}, sort_keys=True).encode())
+    return sha.hexdigest()[:16]
+
+def _compute_full_cache_hash(job_dir, mapping_config=None, redo_config=None):
+    """Compute combined hash of rate card file and configs."""
+    rate_card_files = list(Path(job_dir).glob('* - Rate Card.xlsx'))
+    if not rate_card_files:
+        return None
+    file_hash = _compute_source_hash(rate_card_files[0])
+    config_hash = _compute_config_hash(mapping_config, redo_config)
+    return f"{file_hash}:{config_hash}"
+
+_dashboard_cache_lock = threading.Lock()
+
 def _read_dashboard_cache(job_dir):
     """Read pre-computed dashboard cache from JSON files."""
     breakdown_path = _cache_path_for_job(Path(job_dir))
     summary_path = _summary_cache_path(Path(job_dir))
     result = {'breakdown': {}, 'summary': {}, 'source_hash': None, 'ready': False}
-    if breakdown_path.exists():
-        try:
-            with open(breakdown_path, 'r') as f:
-                data = json.load(f)
-                result['breakdown'] = data.get('carriers', {})
-                result['source_hash'] = data.get('source_hash')
-                result['ready'] = True
-        except Exception:
-            pass
-    if summary_path.exists():
-        try:
-            with open(summary_path, 'r') as f:
-                result['summary'] = json.load(f)
-        except Exception:
-            pass
+    with _dashboard_cache_lock:
+        if breakdown_path.exists():
+            try:
+                with open(breakdown_path, 'r') as f:
+                    data = json.load(f)
+                    result['breakdown'] = data.get('carriers', {})
+                    result['source_hash'] = data.get('source_hash')
+                    result['ready'] = True
+            except json.JSONDecodeError as e:
+                app.logger.error(f"Failed to parse dashboard cache: {e}")
+            except Exception as e:
+                app.logger.error(f"Failed to read dashboard cache: {e}")
+        if summary_path.exists():
+            try:
+                with open(summary_path, 'r') as f:
+                    result['summary'] = json.load(f)
+            except json.JSONDecodeError as e:
+                app.logger.error(f"Failed to parse summary cache: {e}")
+            except Exception as e:
+                app.logger.error(f"Failed to read summary cache: {e}")
     return result
 
 def _write_dashboard_cache(job_dir, breakdown, summary, source_hash):
-    """Write pre-computed dashboard cache to JSON files."""
+    """Write pre-computed dashboard cache to JSON files with atomic writes."""
+    import tempfile
+    import shutil
+    
     breakdown_path = _cache_path_for_job(Path(job_dir))
     summary_path = _summary_cache_path(Path(job_dir))
-    with open(breakdown_path, 'w') as f:
-        json.dump({'carriers': breakdown, 'source_hash': source_hash}, f)
-    with open(summary_path, 'w') as f:
-        json.dump(summary, f)
+    
+    with _dashboard_cache_lock:
+        try:
+            fd, tmp_breakdown = tempfile.mkstemp(suffix='.json', dir=job_dir)
+            with os.fdopen(fd, 'w') as f:
+                json.dump({'carriers': breakdown, 'source_hash': source_hash}, f)
+            shutil.move(tmp_breakdown, breakdown_path)
+            
+            fd, tmp_summary = tempfile.mkstemp(suffix='.json', dir=job_dir)
+            with os.fdopen(fd, 'w') as f:
+                json.dump(summary, f)
+            shutil.move(tmp_summary, summary_path)
+        except Exception as e:
+            app.logger.error(f"Failed to write dashboard cache: {e}")
 
 def _is_cache_valid(job_dir, current_hash):
     """Check if cache is valid based on source hash."""
@@ -2207,30 +2243,121 @@ def _get_background_cache_status(job_dir):
         return job
     return None
 
+def _recalculate_excel_with_libreoffice(excel_path, timeout=60):
+    """Use LibreOffice to recalculate Excel formulas and save."""
+    import subprocess
+    import tempfile
+    import shutil
+    
+    excel_path = Path(excel_path)
+    temp_dir = tempfile.mkdtemp()
+    try:
+        result = subprocess.run(
+            ['soffice', '--headless', '--calc', '--convert-to', 'xlsx', 
+             '--outdir', temp_dir, str(excel_path)],
+            capture_output=True, text=True, timeout=timeout
+        )
+        if result.returncode != 0:
+            app.logger.error(f"LibreOffice recalc failed: {result.stderr}")
+            return False
+        output_file = Path(temp_dir) / excel_path.name
+        if output_file.exists():
+            shutil.copy2(output_file, excel_path)
+            return True
+        return False
+    except subprocess.TimeoutExpired:
+        app.logger.error("LibreOffice recalc timed out")
+        return False
+    except Exception as e:
+        app.logger.error(f"LibreOffice recalc error: {e}")
+        return False
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+def _toggle_carriers_and_read_metrics(rate_card_path, selected_carriers, all_carriers):
+    """Toggle carriers in Excel, recalculate, and read metrics from C5/C7/C11/C12."""
+    import tempfile
+    import shutil
+    
+    rate_card_path = Path(rate_card_path)
+    temp_file = Path(tempfile.mktemp(suffix='.xlsx'))
+    
+    try:
+        shutil.copy2(rate_card_path, temp_file)
+        wb = _load_workbook_with_retry(temp_file, data_only=False)
+        if 'Pricing & Summary' not in wb.sheetnames:
+            wb.close()
+            return {}
+        ws = wb['Pricing & Summary']
+        
+        header_row_idx, label_col, use_col = _find_pricing_section(ws, 'Redo Carriers')
+        if header_row_idx is None:
+            wb.close()
+            return {}
+        
+        selected_set = _redo_selection_from_dashboard(selected_carriers)
+        stop_titles = {'MERCHANT CARRIERS', 'MERCHANT CARRIER', 'MERCHANT SERVICE LEVELS'}
+        for row_idx, label_val in _iter_section_rows(ws, header_row_idx + 1, label_col, stop_titles):
+            normalized = normalize_redo_label(label_val)
+            target_cell = ws.cell(row_idx, use_col)
+            if 'FIRST MILE' in normalized:
+                target_cell.value = 'No'
+                continue
+            target_cell.value = 'Yes' if normalized in selected_set else 'No'
+        
+        wb.save(temp_file)
+        wb.close()
+        
+        if not _recalculate_excel_with_libreoffice(temp_file):
+            return {}
+        
+        wb = _load_workbook_with_retry(temp_file, data_only=True)
+        ws = wb['Pricing & Summary']
+        metrics = {
+            'Est. Merchant Annual Savings': ws['C5'].value,
+            'Spread Available': ws['C7'].value,
+            '% Orders We Could Win': ws['C11'].value,
+            '% Orders Won W/ Spread': ws['C12'].value
+        }
+        wb.close()
+        return metrics
+    except Exception as e:
+        app.logger.error(f"Toggle carriers error: {e}")
+        return {}
+    finally:
+        if temp_file.exists():
+            temp_file.unlink()
+
 def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=None):
     """Pre-compute all dashboard metrics and save to JSON cache."""
     job_dir = Path(job_dir)
     rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
     if not rate_card_files:
+        app.logger.error("No rate card file found for precompute")
         return False
     
-    source_hash = _compute_source_hash(rate_card_files[0])
+    full_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
     selected_redo = redo_config.get('selected_carriers', [])
     selected_dashboard = _dashboard_selected_from_redo(selected_redo)
     available_carriers = list(DASHBOARD_CARRIERS)
+    
+    app.logger.info(f"Precomputing dashboard metrics for {len(available_carriers)} carriers")
     
     carrier_metrics = {}
     for carrier in available_carriers:
         metrics = _calculate_metrics_fast(job_dir, [carrier], mapping_config)
         if metrics:
             carrier_metrics[carrier] = metrics
+            app.logger.info(f"Computed metrics for {carrier}")
     
     summary_by_selection = {}
     default_key = _selection_cache_key(list(selected_dashboard))
     combined_metrics = _calculate_metrics_fast(job_dir, list(selected_dashboard), mapping_config)
     summary_by_selection[default_key] = combined_metrics if combined_metrics else {}
+    app.logger.info(f"Computed summary metrics for default selection")
     
-    _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, source_hash)
+    _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, full_hash)
+    app.logger.info("Dashboard metrics cache written successfully")
     return True
 
 def _summary_job_key(job_dir, source_mtime, selection_key):
@@ -5000,7 +5127,7 @@ def dashboard_data(job_id):
         if not rate_card_files:
             return jsonify({'error': 'Rate card not found'}), 404
         
-        current_hash = _compute_source_hash(rate_card_files[0])
+        current_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
         
         refresh = request.args.get('refresh') == '1'
         if refresh:
@@ -5111,6 +5238,9 @@ def dashboard_data(job_id):
         
         if not overall_metrics:
             overall_metrics = _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config)
+            if overall_metrics:
+                summary_cache[selection_key] = overall_metrics
+                _write_dashboard_cache(job_dir, carrier_metrics, summary_cache, current_hash)
         
         if annual_orders_missing:
             overall_metrics = {k: v for k, v in (overall_metrics or {}).items() 
