@@ -1,0 +1,38 @@
+Here’s the full end‑to‑end flow as implemented in app.py, including data artifacts and endpoints, in the order a user normally hits them.
+
+Rate Card Flow
+
+Landing: / or /upload cleans old jobs (older than 24h) via clean_old_runs() and renders UI (entry.html, screen1.html). This is the start of a new job folder under runs/ in app.py.
+Upload: /api/upload accepts CSV/XLSX, creates a job_id under runs/<job_id>/, saves raw_invoice.csv (XLSX is converted), detects structure (zip vs zone) via detect_structure(), and returns the available columns plus requires_origin_zip. This is the first persistent artifact in raw_invoice.csv.
+Mapping + normalization: /api/mapping validates required mappings (carrier/service, plus Zip or Zone based on structure) and weight unit. It saves mapping.json, normalizes data into normalized.csv, and derives columns:
+Country codes and names (based on a detected “country” column).
+Zone derivation if structure is zip‑based (requires USPS zone chart cache; errors if missing).
+Cleaned shipping service and shipping priority classification.
+Weight conversion (oz/lb/kg) and dimensional volume + size/weight classes.
+Origin ZIP persisted to each row.
+Service levels: /api/service-levels/<job_id> returns available service levels from raw invoice. POST to /api/service-levels stores service_levels.json with the selected service levels.
+Merchant pricing: /api/merchant-pricing/<job_id> returns available carriers and services and enforces eligibility for Amazon/UniUni based on origin ZIP and annual orders (via compute_eligibility()). POST stores merchant_pricing.json with excluded_carriers and included_services.
+Redo carriers: /api/redo-carriers/<job_id> returns and stores redo carrier selections in redo_carriers.json. It forces on carriers from REDO_FORCED_ON and enforces Amazon/UniUni eligibility.
+Generate: /api/generate creates progress.json and starts generate_rate_card() in a background thread.
+Loads #New Template - Rate Card.xlsx (or Rate Card Template.xlsx fallback).
+Writes normalized data into the “Raw Data” sheet, maps standard fields, and keeps formula columns intact.
+Applies QUALIFIED = selected service levels + not excluded carrier.
+Writes merchant ID, origin ZIP, and zone (zone‑based fallback from raw CSV if needed).
+Updates “Pricing & Summary” sheet: annual orders, origin ZIP, USPS Market discounts, redo carriers, merchant carriers/services.
+Saves atomically to <Merchant> - Rate Card.xlsx and logs to admin_log.xlsx.
+Warms dashboard caches for metrics.
+Status/polling: /api/status/<job_id> checks progress.json and existence of * - Rate Card.xlsx. When ready, it returns redirect_url: /dashboard?job_id=....
+Dashboard: /dashboard loads UI; /api/dashboard/<job_id> returns summary metrics and per‑carrier metrics from cached calculations against the generated rate card. Optional refresh=1 clears cache files. If annual orders are missing, savings/deal size metrics are suppressed.
+Deal Sizing Flow
+
+Embedded into the main flow: /api/deal-sizing-inputs/<job_id> stores deal‑sizing inputs inside mapping.json under deal_sizing_inputs.
+Standalone mode (no rate card needed): /deal-sizing renders UI and /api/deal-sizing-standalone writes a single row into the Deal sizing sheet in admin_log.xlsx.
+Per‑job deal sizing data: /api/deal-sizing/<job_id> returns annual orders, avg label cost, and carrier detail breakdowns (cached from the generated rate card).
+Downloads
+
+/download/<job_id>/rate-card serves the generated XLSX.
+/download/<job_id>/raw-invoice serves raw_invoice.csv.
+/download/<job_id>/normalized serves normalized.csv.
+Supporting Data + Eligibility
+
+Amazon/UniUni eligibility depends on origin ZIP and annual orders, using Amazon Zip list - Zip Code List.csv and UniUni Qualified Zips.txt (loaded lazily). USPS zone lookup relies on cached zone data in usps_zone_cache.json or zip_code_zones_new.csv and will error if it can’t fetch/cache a chart.
