@@ -4908,6 +4908,36 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         raise Exception(f"Failed to save Excel file: {str(e)}")
     finally:
         wb.close()
+    
+    # Pre-compute dashboard metrics using fast calculation to avoid slow Excel loading later
+    try:
+        selected_redo = redo_config.get('selected_carriers', [])
+        selected_dashboard = _dashboard_selected_from_redo(selected_redo)
+        available_carriers = list(DASHBOARD_CARRIERS)
+        
+        # Pre-compute metrics for overall selection and each carrier using fast method
+        precomputed_cache = {}
+        selection_key = _selection_cache_key(list(selected_dashboard))
+        
+        # Try fast calculation first
+        fast_metrics = _calculate_metrics_fast(job_dir, list(selected_dashboard), mapping_config)
+        if fast_metrics:
+            precomputed_cache[f"selection:{selection_key}"] = fast_metrics
+        
+        # Pre-compute for each carrier
+        for carrier in available_carriers:
+            carrier_metrics = _calculate_metrics_fast(job_dir, [carrier], mapping_config)
+            if carrier_metrics:
+                precomputed_cache[f"carrier:{carrier}"] = carrier_metrics
+        
+        # Save precomputed metrics to JSON cache
+        if precomputed_cache:
+            cache_path = _fast_cache_path(job_dir)
+            with open(cache_path, 'w') as f:
+                json.dump(precomputed_cache, f)
+    except Exception:
+        pass  # Don't fail rate card generation if pre-computation fails
+    
     try:
         log_admin_entry(job_dir.name, mapping_config, merchant_pricing, redo_config)
     except Exception:
