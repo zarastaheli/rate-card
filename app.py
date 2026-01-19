@@ -37,6 +37,36 @@ summary_jobs_lock = threading.Lock()
 carrier_details_jobs = {}
 carrier_details_jobs_lock = threading.Lock()
 
+# Template caching - load once at startup to avoid 25s load time per generation
+_template_cache = {}
+_template_cache_lock = threading.Lock()
+
+def _get_cached_template():
+    """Get the template workbook from cache, loading if needed."""
+    global _template_cache
+    template_path = Path('#New Template - Rate Card.xlsx')
+    if not template_path.exists():
+        template_path = Path('Rate Card Template.xlsx')
+    if not template_path.exists():
+        raise FileNotFoundError(f"Template file not found")
+    
+    cache_key = str(template_path)
+    with _template_cache_lock:
+        cached = _template_cache.get(cache_key)
+        if cached and cached.get('mtime') == template_path.stat().st_mtime:
+            # Return a copy of the cached BytesIO
+            cached['buffer'].seek(0)
+            return BytesIO(cached['buffer'].read())
+        
+        # Load and cache the template as bytes
+        with open(template_path, 'rb') as f:
+            template_bytes = f.read()
+        _template_cache[cache_key] = {
+            'buffer': BytesIO(template_bytes),
+            'mtime': template_path.stat().st_mtime
+        }
+        return BytesIO(template_bytes)
+
 def _load_workbook_with_retry(path, attempts=3, delay=0.2, **kwargs):
     """Load a workbook with retries to avoid transient read errors."""
     last_exc = None
@@ -4700,6 +4730,9 @@ def write_error(job_dir, message):
 
 def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     """Generate the rate card Excel file"""
+    import logging
+    gen_start = time.time()
+    
     # Save output path first
     merchant_name = mapping_config.get('merchant_name', 'Merchant')
     output_filename = f"{merchant_name} - Rate Card.xlsx"
@@ -4708,16 +4741,11 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     # Step 1: Normalize data
     write_progress(job_dir, 'normalize', True)
     
-    # Copy template to output location first to preserve file structure
-    template_path = Path('#New Template - Rate Card.xlsx')
-    if not template_path.exists():
-        template_path = Path('Rate Card Template.xlsx')
-    if not template_path.exists():
-        raise FileNotFoundError(f"Template file not found: {template_path}")
-    
-    # Load template directly - openpyxl will preserve structure when saving
-    # Don't use keep_vba as it can cause corruption with openpyxl
-    wb = openpyxl.load_workbook(template_path, keep_vba=False, data_only=False)
+    # Load template from cache (fast BytesIO copy instead of 25s file read)
+    load_start = time.time()
+    template_buffer = _get_cached_template()
+    wb = openpyxl.load_workbook(template_buffer, keep_vba=False, data_only=False)
+    logging.info(f"Template load time: {time.time() - load_start:.1f}s")
     if 'Raw Data' not in wb.sheetnames:
         raise ValueError("Template must contain 'Raw Data' sheet")
     ws = wb['Raw Data']
@@ -5012,10 +5040,12 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     
     # Save the workbook atomically
     temp_file = None
+    save_start = time.time()
     try:
         with tempfile.NamedTemporaryFile(delete=False, dir=job_dir, suffix='.xlsx') as tmp:
             temp_file = Path(tmp.name)
         wb.save(temp_file)
+        logging.info(f"Workbook save time: {time.time() - save_start:.1f}s")
         if not zipfile.is_zipfile(temp_file):
             raise Exception("Generated file is not a valid XLSX archive")
         os.replace(temp_file, output_path)
@@ -5040,6 +5070,7 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     except Exception:
         pass
 
+    logging.info(f"Total generation time: {time.time() - gen_start:.1f}s")
     return output_path
 
 @app.route('/api/status/<job_id>')
@@ -5463,4 +5494,10 @@ def download_normalized(job_id):
     return send_file(normalized_csv, as_attachment=True, download_name='normalized.csv')
 
 if __name__ == '__main__':
+    # Preload template into cache at startup
+    try:
+        _get_cached_template()
+        print("Template preloaded into cache")
+    except Exception as e:
+        print(f"Warning: Could not preload template: {e}")
     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)
