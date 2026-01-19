@@ -2227,7 +2227,8 @@ def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=
     
     summary_by_selection = {}
     default_key = _selection_cache_key(list(selected_dashboard))
-    summary_by_selection[default_key] = _aggregate_metrics_from_carriers(carrier_metrics, list(selected_dashboard))
+    combined_metrics = _calculate_metrics_fast(job_dir, list(selected_dashboard), mapping_config)
+    summary_by_selection[default_key] = combined_metrics if combined_metrics else {}
     
     _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, source_hash)
     return True
@@ -5151,7 +5152,7 @@ def dashboard_data(job_id):
         overall_metrics = summary_cache.get(selection_key)
         
         if not overall_metrics:
-            overall_metrics = _aggregate_metrics_from_carriers(carrier_metrics, selected_dashboard)
+            overall_metrics = _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config)
         
         if annual_orders_missing:
             overall_metrics = {k: v for k, v in (overall_metrics or {}).items() 
