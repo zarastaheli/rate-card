@@ -467,6 +467,18 @@ h1,
   box-shadow: none;
 }
 
+.button-icon {
+  padding: 6px;
+  min-width: auto;
+  border-radius: 10px;
+}
+
+.button-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 /* Screen 2 - Mapping */
 .table-container {
   margin: 12px 0 4px;
@@ -886,6 +898,12 @@ h1,
 }
 
 .dashboard-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dashboard-actions-stack {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1876,7 +1894,7 @@ h1,
 
 .admin-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
@@ -1884,7 +1902,7 @@ h1,
 
 .admin-header-actions {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   flex-wrap: wrap;
 }
@@ -2177,6 +2195,37 @@ h1,
 .admin-table td.admin-col-breakdown,
 .admin-table th.admin-col-breakdown {
   white-space: normal;
+}
+
+.admin-col-action {
+  width: 52px;
+  text-align: center;
+}
+
+.admin-row-delete {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.admin-row-delete svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.admin-row-delete:hover {
+  border-color: #cbd5f5;
+  color: #475569;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
 }
 
 .admin-table tbody tr:hover td {

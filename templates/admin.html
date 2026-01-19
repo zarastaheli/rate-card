@@ -14,15 +14,18 @@
     <div class="card admin-card">
       <div class="card-content">
         <div class="card-body">
+          <div class="admin-back-row">
+            <button class="button button-secondary" type="button" id="back-home">Back</button>
+          </div>
+
           <div class="admin-header">
             <div>
               <div class="entry-title entry-title--bold">Admin</div>
               <p class="subtitle">All Input Data Captured From The Flow</p>
             </div>
             <div class="admin-header-actions">
-              <button class="button button-secondary" type="button" id="back-home">Back</button>
-              <button class="button button-secondary" type="button" id="clear-sheet">Clear Sheet</button>
               <a class="button button-secondary" href="/admin/download">Download Spreadsheet</a>
+              <button class="button button-secondary" type="button" id="clear-sheet">Clear Sheet</button>
             </div>
           </div>
 
@@ -36,12 +39,14 @@
               <thead>
                 {% if deal_data.groups %}
                 <tr class="admin-group-row">
+                  <th class="admin-group-cell admin-col-action" colspan="1"></th>
                   {% for group in deal_data.groups %}
                   <th class="admin-group-cell" colspan="{{ group.span }}">{{ group.label }}</th>
                   {% endfor %}
                 </tr>
                 {% endif %}
                 <tr>
+                  <th class="admin-col-action"></th>
                   {% for header in (deal_data.headers if deal_data is defined else []) %}
                   {% set header_text = header|string %}
                   {% set is_json = 'JSON' in header_text %}
@@ -55,6 +60,16 @@
                 {% if deal_data is defined and deal_data.rows %}
                   {% for row in deal_data.rows %}
                   <tr>
+                    {% set row_id = deal_data.row_ids[loop.index0] if deal_data.row_ids is defined and (deal_data.row_ids | length) > loop.index0 else '' %}
+                    <td class="admin-col-action">
+                      {% if row_id %}
+                      <button class="admin-row-delete" type="button" data-sheet="deal" data-row-id="{{ row_id }}" aria-label="Delete row">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                          <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM7 9h2v9H7V9z"/>
+                        </svg>
+                      </button>
+                      {% endif %}
+                    </td>
                     {% for cell in row %}
                     {% set header = deal_data.headers[loop.index0] if deal_data.headers is defined else '' %}
                     {% set header_text = header|string %}
@@ -73,7 +88,7 @@
                   {% endfor %}
                 {% else %}
                   <tr>
-                    <td colspan="{{ (deal_data.headers | length) if deal_data is defined else 1 }}">No entries yet.</td>
+                    <td colspan="{{ ((deal_data.headers | length) + 1) if deal_data is defined else 2 }}">No entries yet.</td>
                   </tr>
                 {% endif %}
               </tbody>
@@ -85,12 +100,14 @@
               <thead>
                 {% if rate_data.groups %}
                 <tr class="admin-group-row">
+                  <th class="admin-group-cell admin-col-action" colspan="1"></th>
                   {% for group in rate_data.groups %}
                   <th class="admin-group-cell" colspan="{{ group.span }}">{{ group.label }}</th>
                   {% endfor %}
                 </tr>
                 {% endif %}
                 <tr>
+                  <th class="admin-col-action"></th>
                   {% for header in (rate_data.headers if rate_data is defined else []) %}
                   {% set header_text = header|string %}
                   {% set is_json = 'JSON' in header_text %}
@@ -104,6 +121,16 @@
                 {% if rate_data is defined and rate_data.rows %}
                   {% for row in rate_data.rows %}
                   <tr>
+                    {% set row_id = rate_data.row_ids[loop.index0] if rate_data.row_ids is defined and (rate_data.row_ids | length) > loop.index0 else '' %}
+                    <td class="admin-col-action">
+                      {% if row_id %}
+                      <button class="admin-row-delete" type="button" data-sheet="rate" data-row-id="{{ row_id }}" aria-label="Delete row">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                          <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM7 9h2v9H7V9z"/>
+                        </svg>
+                      </button>
+                      {% endif %}
+                    </td>
                     {% for cell in row %}
                     {% set header = rate_data.headers[loop.index0] if rate_data.headers is defined else '' %}
                     {% set header_text = header|string %}
@@ -122,7 +149,7 @@
                   {% endfor %}
                 {% else %}
                   <tr>
-                    <td colspan="{{ (rate_data.headers | length) if rate_data is defined else 1 }}">No entries yet.</td>
+                    <td colspan="{{ ((rate_data.headers | length) + 1) if rate_data is defined else 2 }}">No entries yet.</td>
                   </tr>
                 {% endif %}
               </tbody>
@@ -140,6 +167,17 @@
       <div class="modal-actions">
         <button class="button button-secondary" type="button" id="clear-sheet-cancel">Cancel</button>
         <button class="button button-primary" type="button" id="clear-sheet-confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay is-hidden" id="delete-row-modal">
+    <div class="modal-card">
+      <div class="modal-title">Delete This Entry?</div>
+      <div class="modal-subtitle">This action cannot be undone.</div>
+      <div class="modal-actions">
+        <button class="button button-secondary" type="button" id="delete-row-cancel">Cancel</button>
+        <button class="button button-primary" type="button" id="delete-row-confirm">Delete</button>
       </div>
     </div>
   </div>
@@ -223,6 +261,60 @@
         window.location.reload();
       } catch (err) {
         alert('Unable to clear sheet. Please try again.');
+      }
+    });
+
+    const deleteRowModal = document.getElementById('delete-row-modal');
+    const deleteRowCancel = document.getElementById('delete-row-cancel');
+    const deleteRowConfirm = document.getElementById('delete-row-confirm');
+    let pendingDelete = null;
+
+    function closeDeleteModal() {
+      deleteRowModal.classList.add('is-hidden');
+      pendingDelete = null;
+    }
+
+    deleteRowCancel.addEventListener('click', closeDeleteModal);
+    deleteRowModal.addEventListener('click', (event) => {
+      if (event.target === deleteRowModal) {
+        closeDeleteModal();
+      }
+    });
+
+    document.querySelectorAll('.admin-row-delete').forEach((button) => {
+      button.addEventListener('click', () => {
+        const rowId = button.dataset.rowId;
+        const sheet = button.dataset.sheet || 'deal';
+        if (!rowId) return;
+        pendingDelete = { rowId, sheet };
+        deleteRowModal.classList.remove('is-hidden');
+      });
+    });
+
+    deleteRowConfirm.addEventListener('click', async () => {
+      if (!pendingDelete) return;
+      const { rowId, sheet } = pendingDelete;
+      try {
+        const response = await fetch('/api/admin/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sheet, row_id: rowId })
+        });
+        let data = {};
+        try {
+          data = await response.json();
+        } catch (err) {
+          data = {};
+        }
+        if (!response.ok || data.error) {
+          const message = data.error || 'Unable to delete row. Please try again.';
+          alert(message);
+          return;
+        }
+        closeDeleteModal();
+        window.location.reload();
+      } catch (err) {
+        alert('Unable to delete row. Please try again.');
       }
     });
   </script>

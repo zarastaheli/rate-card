@@ -7,13 +7,16 @@ import subprocess
 import re
 import math
 import zipfile
+import urllib.request
+import urllib.parse
+from io import BytesIO
 import tempfile
 import threading
 import time
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, send_file, session
+from flask import Flask, render_template, request, jsonify, send_file, session, after_this_request
 import pandas as pd
 import numpy as np
 import openpyxl
@@ -32,6 +35,19 @@ summary_jobs = {}
 summary_jobs_lock = threading.Lock()
 carrier_details_jobs = {}
 carrier_details_jobs_lock = threading.Lock()
+
+def _load_workbook_with_retry(path, attempts=3, delay=0.2, **kwargs):
+    """Load a workbook with retries to avoid transient read errors."""
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            return openpyxl.load_workbook(path, **kwargs)
+        except (zipfile.BadZipFile, OSError, ValueError) as exc:
+            last_exc = exc
+            if attempt + 1 >= attempts:
+                break
+            time.sleep(delay * (attempt + 1))
+    raise last_exc
 
 # Thresholds for size/weight classification.
 SMALL_MAX_VOLUME = 1728
@@ -132,8 +148,77 @@ REDO_FORCED_ON = [
 ]
 MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'DHL', 'UniUni']
 DASHBOARD_CARRIERS = ['UniUni', 'USPS Market', 'UPS Ground', 'UPS Ground Saver', 'FedEx', 'Amazon']
-FAST_DASHBOARD_METRICS = True
+FAST_DASHBOARD_METRICS = False
 WEIGHT_BUCKETS = [i / 16 for i in range(1, 16)] + list(range(1, 21))
+
+USPS_ZONE_CACHE = {}
+USPS_ZONE_CACHE_LOCK = threading.Lock()
+USPS_ZONE_CACHE_PATH = os.environ.get('USPS_ZONE_CACHE_PATH') or str(
+    Path(__file__).resolve().parent / 'runs' / 'usps_zone_cache.json'
+)
+USPS_ZONE_CSV_PATH = os.environ.get('USPS_ZONE_CSV_PATH') or str(
+    Path(__file__).resolve().parent / 'zip_code_zones_new.csv'
+)
+USPS_ZONE_CSV_LOADED = False
+
+MANUAL_ZONE_TABLE_604 = """
+005 5 399 4 550---551 4 780---785 6
+006---009 8 400---402 3 553---558 4 786---787 5
+010---045 5 403---404 4 559 3 788 6
+046---047 6 405---406 3 560---566 4 789---796 5
+048---089 5 407---409 4 567 5 797---799 6
+090---099 5+ 410 3 570---573 4 800---810 5
+100---139 5 411---418 4 574---577 5 811 6
+140---173 4 420---422 4 580---581 4 812 5
+174---176 5 423---424 3 582---588 5 813---816 6
+177 4 425---426 4 590---591 6 820 5
+178---200 5 427 3 592---593 5 821 6
+201 4 430---436 3 594---599 6 822---823 5
+202---207 5 437---447 4 600---602 2* 824---825 6
+208 4 448---455 3 603---606 1* 826---828 5
+209---212 5 456---457 4 607 2* 829---834 6
+214 5 458---459 3 608 1* 835---838 7
+215 4 460 2 609 1 840---847 6
+216 5 461 3 610---611 2* 850 7
+217 4 462 2 612 2 851---852 6
+218---224 5 463 2* 613 1 853 7
+225---230 4 464 1* 614---619 2 855 6
+231---238 5 465---467 2 620 3 856---857 7
+239---268 4 468 3 622---624 3 859---860 6
+270---272 4 469 2 625---627 2 863---864 7
+273 5 470---477 3 628---631 3 865 6
+274 4 478---479 2 633---637 3 870---871 6
+275---279 5 480---483 3 638---641 4 873---876 6
+280---282 4 484 4 644---649 4 877 5
+283---285 5 485---486 3 650---652 3 878---880 6
+286---289 4 487 4 653---658 4 881 5
+290---292 5 488---489 3 660---662 4 882---883 6
+293 4 490---491 2 664---669 4 884 5
+294---295 5 492---496 3 670---671 5 885 6
+296---297 4 497---500 4 672---674 4 889---891 7
+298---299 5 501 3 675---679 5 893---895 7
+300---303 4 502 4 680---681 4 897---898 7
+304 5 503---504 3 683---689 4 900---908 7
+305---307 4 505 4 690---693 5 910---928 7
+308---310 5 506---507 3 700---701 5 930---938 7
+311 4 508 4 703---708 5 939---941 8
+312---328 5 509 3 710---714 5 942 7
+329---334 6 510---516 4 716---717 4 943---951 8
+335---337 5 520---526 3 718 5 952---953 7
+338---342 6 527---528 2 719---729 4 954---955 8
+344 5 530 3* 730---731 5 956---961 7
+346---347 5 531---532 2* 733---739 5 962---966 8+
+349 6 534 2* 740---741 4 96700 8
+350---352 4 535 3* 743---744 4 968 8
+354---359 4 537 2* 745 5 969 9+
+360---361 5 538---539 3* 746 4 970---982 7
+362 4 540 4 747---748 5 983 8
+363---369 5 541---544 3 749 4 984---986 7
+370---390 4 545 4 750---768 5 988---994 7
+391---396 5 546 3 769 6 995---999 8
+397 4 547---548 4 770 5
+398 5 549 3* 772---779 5
+"""
 
 def strip_after_dash(value):
     if value is None:
@@ -154,7 +239,8 @@ def _load_amazon_zips():
     global AMAZON_ZIPS
     if AMAZON_ZIPS is not None:
         return AMAZON_ZIPS
-    zips = set()
+    zip5 = set()
+    zip3 = set()
     if AMAZON_ZIP_PATH.exists():
         try:
             with AMAZON_ZIP_PATH.open(newline='', encoding='utf-8', errors='ignore') as f:
@@ -162,16 +248,15 @@ def _load_amazon_zips():
                 for row in reader:
                     raw = row.get('Zip Code') or ''
                     digits = re.sub(r'\D', '', str(raw))
-                    if not digits:
-                        continue
                     if len(digits) < 5:
-                        digits = digits.zfill(5)
-                    else:
-                        digits = digits[:5]
-                    zips.add(digits)
+                        continue
+                    digits = digits[:5]
+                    zip5.add(digits)
+                    zip3.add(digits[:3])
         except Exception:
-            zips = set()
-    AMAZON_ZIPS = zips
+            zip5 = set()
+            zip3 = set()
+    AMAZON_ZIPS = {'zip5': zip5, 'zip3': zip3}
     return AMAZON_ZIPS
 
 def _load_uniuni_zips():
@@ -205,13 +290,13 @@ def get_working_days_per_year():
 
 def is_amazon_eligible(origin_zip):
     digits = re.sub(r'\D', '', str(origin_zip or ''))
-    if not digits:
+    if len(digits) < 3:
         return False
     amazon_zips = _load_amazon_zips()
-    if len(digits) < 5:
-        return any(zip_code.startswith(digits) for zip_code in amazon_zips)
-    digits = digits[:5]
-    return digits in amazon_zips
+    if len(digits) >= 5:
+        digits = digits[:5]
+        return digits in amazon_zips.get('zip5', set())
+    return digits[:3] in amazon_zips.get('zip3', set())
 
 def is_uniuni_zip_eligible(origin_zip):
     digits = re.sub(r'\D', '', str(origin_zip or ''))
@@ -320,7 +405,7 @@ def _effective_orders(annual_orders, comment_sold, ebay, live_selling):
 def default_included_services(services):
     if not services:
         return []
-    exclude_tokens = {'PRIORITY', 'NEXT', '2ND', 'SECOND'}
+    exclude_tokens = {'PRIORITY', 'NEXT', '2ND', 'SECOND', '2_DAY', '2DAY'}
     international_tokens = {'INTERNATIONAL', 'INTL'}
     included = []
     for service in services:
@@ -375,6 +460,232 @@ def extract_origin_zip(value):
     if len(digits) >= 5:
         return int(digits[:5])
     return int(digits)
+
+def _zip3_from_zip(value):
+    digits = re.sub(r'\D', '', str(value or ''))
+    if len(digits) < 3:
+        return None
+    return digits[:3].zfill(3)
+
+def _zip3s_from_range(value):
+    if value is None:
+        return []
+    text = str(value)
+    digits = re.findall(r'\d{3,5}', text)
+    if not digits:
+        return []
+    if len(digits) >= 2 and re.search(r'(-|–|—|to|thru|through|~|---)', text, re.IGNORECASE):
+        start = int(digits[0][:3])
+        end = int(digits[1][:3])
+        if end < start:
+            start, end = end, start
+        return [f"{zip3:03d}" for zip3 in range(start, end + 1)]
+    return [digits[0][:3].zfill(3)]
+
+@lru_cache(maxsize=1)
+def _build_manual_zone_map_604():
+    mapping = {}
+    for raw_line in MANUAL_ZONE_TABLE_604.strip().splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        tokens = line.split()
+        for idx in range(0, len(tokens) - 1, 2):
+            zip_token = tokens[idx]
+            zone_token = tokens[idx + 1]
+            zone_match = re.search(r'\d+', zone_token)
+            if not zone_match:
+                continue
+            zone_value = zone_match.group()
+            if '---' in zip_token:
+                start_raw, end_raw = zip_token.split('---', 1)
+                start_digits = re.sub(r'\D', '', start_raw)
+                end_digits = re.sub(r'\D', '', end_raw)
+                if not start_digits or not end_digits:
+                    continue
+                start_zip = int(start_digits[:3])
+                end_zip = int(end_digits[:3])
+            else:
+                digits = re.sub(r'\D', '', zip_token)
+                if not digits:
+                    continue
+                start_zip = end_zip = int(digits[:3])
+            for zip3 in range(start_zip, end_zip + 1):
+                mapping[f"{zip3:03d}"] = zone_value
+    return mapping
+
+def _load_usps_zone_cache():
+    if not USPS_ZONE_CACHE_PATH:
+        return
+    cache_path = Path(USPS_ZONE_CACHE_PATH)
+    if not cache_path.exists():
+        return
+    try:
+        with open(cache_path, 'r') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            USPS_ZONE_CACHE.update(data)
+    except Exception:
+        pass
+
+def _save_usps_zone_cache():
+    if not USPS_ZONE_CACHE_PATH:
+        return
+    cache_path = Path(USPS_ZONE_CACHE_PATH)
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, 'w') as f:
+            json.dump(USPS_ZONE_CACHE, f)
+    except Exception:
+        pass
+
+def _choose_origin_zip_column(fieldnames):
+    for name in fieldnames:
+        if name.lower() in {'zipcodeprefix', 'zip_code_prefix', 'zip code prefix'}:
+            return name
+    for name in fieldnames:
+        if 'origin' in name.lower() and 'zip' in name.lower():
+            return name
+    return None
+
+def _choose_dest_zip_column(fieldnames):
+    candidates = {
+        'destinationzip', 'destzip', 'destination zip', 'dest zip',
+        'destinationzipcode', 'destzipcode', 'destination zip code',
+        'dest zip code', 'zip', 'zipcode', 'zip code', 'destination'
+    }
+    for name in fieldnames:
+        if name.lower() in candidates:
+            return name
+    for name in fieldnames:
+        lowered = name.lower()
+        if 'zip' in lowered and 'prefix' not in lowered and 'origin' not in lowered:
+            return name
+    return None
+
+def _choose_zone_column(fieldnames):
+    for name in fieldnames:
+        if 'zone' in name.lower():
+            return name
+    return None
+
+def _load_usps_zone_csv_cache():
+    global USPS_ZONE_CSV_LOADED
+    if USPS_ZONE_CSV_LOADED:
+        return
+    USPS_ZONE_CSV_LOADED = True
+    path = Path(USPS_ZONE_CSV_PATH)
+    if not path.exists():
+        return
+    try:
+        with open(path, newline='', encoding='utf-8') as handle:
+            reader = csv.DictReader(handle)
+            if not reader.fieldnames:
+                return
+            origin_col = _choose_origin_zip_column(reader.fieldnames) or 'ZipCodePrefix'
+            dest_col = _choose_dest_zip_column(reader.fieldnames)
+            zone_col = _choose_zone_column(reader.fieldnames)
+            if dest_col is None or zone_col is None:
+                return
+            for row in reader:
+                origin_raw = row.get(origin_col)
+                origin_zip3 = _zip3_from_zip(origin_raw)
+                if not origin_zip3:
+                    continue
+                dest_raw = row.get(dest_col)
+                zone_raw = row.get(zone_col)
+                if not dest_raw or not zone_raw:
+                    continue
+                zone_match = re.search(r'\d+', str(zone_raw).strip())
+                if not zone_match:
+                    continue
+                zone_value = zone_match.group()
+                for dest_zip3 in _zip3s_from_range(dest_raw):
+                    USPS_ZONE_CACHE.setdefault(origin_zip3, {})[dest_zip3] = zone_value
+    except Exception:
+        return
+
+def _zone_mapping_from_usps_json(data):
+    mapping = {}
+    if not isinstance(data, dict):
+        return mapping
+    for key, rows in data.items():
+        if not str(key).lower().startswith('column'):
+            continue
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            dest_value = None
+            for candidate in (
+                'DestinationZip', 'DestZip', 'DestZipCode', 'Destination ZIP',
+                'Destination Zip', 'ZIP', 'Zip', 'ZipCode', 'ZIP Code', 'Destination'
+            ):
+                if candidate in row and row.get(candidate):
+                    dest_value = row.get(candidate)
+                    break
+            if dest_value is None:
+                for value in row.values():
+                    if value and re.search(r'\d{3,5}', str(value)):
+                        dest_value = value
+                        break
+            zone_value = None
+            for candidate in ('Zone', 'ZONE', 'zone'):
+                if candidate in row and row.get(candidate):
+                    zone_value = row.get(candidate)
+                    break
+            if zone_value is None:
+                for key_name, value in row.items():
+                    if 'zone' in str(key_name).lower():
+                        zone_value = value
+                        break
+            if not zone_value:
+                continue
+            for dest_zip3 in _zip3s_from_range(dest_value):
+                zone_match = re.search(r'\d+', str(zone_value).strip())
+                if zone_match:
+                    mapping[dest_zip3] = zone_match.group()
+    return mapping
+
+def _fetch_usps_zone_chart_json(origin_zip3):
+    if not origin_zip3:
+        return {}
+    shipping_date = datetime.now().strftime('%m/%d/%Y')
+    params = urllib.parse.urlencode({
+        'zipCode3Digit': origin_zip3,
+        'shippingDate': shipping_date
+    })
+    url = f"https://postcalc.usps.com/DomesticZoneChart/GetZoneChart?{params}"
+    headers = {
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Referer': 'https://postcalc.usps.com/domesticzonechart',
+        'User-Agent': 'Mozilla/5.0',
+        'X-Requested-With': 'XMLHttpRequest'
+    }
+    try:
+        request_obj = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request_obj, timeout=20) as response:
+            content = response.read()
+    except Exception:
+        return {}
+    try:
+        data = json.loads(content.decode('utf-8', errors='ignore'))
+    except Exception:
+        return {}
+    return _zone_mapping_from_usps_json(data)
+
+def _fetch_usps_zone_chart(origin_zip3):
+    if not origin_zip3:
+        return {}
+    with USPS_ZONE_CACHE_LOCK:
+        _load_usps_zone_csv_cache()
+        cached = USPS_ZONE_CACHE.get(origin_zip3)
+        if isinstance(cached, dict) and cached:
+            return cached
+    if origin_zip3 == '604':
+        return _build_manual_zone_map_604()
+    return {}
 
 def to_float(value):
     try:
@@ -522,12 +833,7 @@ def available_merchant_services(raw_df, mapping_config):
     services = extract_invoice_services(raw_df, mapping_config)
     if not services:
         return []
-    normalized_invoice = {normalize_service_name(s) for s in services if s}
     canonical_map = {normalize_service_name(s): s for s in SERVICE_LEVELS}
-    available = [canonical_map[n] for n in canonical_map if n in normalized_invoice]
-    if available:
-        return available
-    # Fallback: return unique services from invoice when no canonical match exists.
     seen = set()
     ordered = []
     for service in services:
@@ -535,12 +841,11 @@ def available_merchant_services(raw_df, mapping_config):
             continue
         cleaned = str(service).replace('Â', '').replace('®', '').strip()
         cleaned = re.sub(r'\s+', ' ', cleaned)
-        display = cleaned.upper().strip()
-        norm = re.sub(r'[^A-Z0-9]+', '', display)
+        norm = normalize_service_name(cleaned)
         if not norm or norm in seen:
             continue
         seen.add(norm)
-        ordered.append(display)
+        ordered.append(canonical_map.get(norm, cleaned))
     return ordered
 
 def normalize_redo_label(label):
@@ -611,20 +916,435 @@ def _redo_selection_from_dashboard(selected_dashboard):
     return selected
 
 def _read_summary_metrics(ws):
-    labels = [
-        'Est. Merchant Annual Savings',
-        'Est. Redo Deal Size',
-        'Spread Available',
-        '% Orders We Could Win',
-        '% Orders Won W/ Spread'
-    ]
-    values = {}
-    for row in ws.iter_rows():
-        for cell in row:
-            if cell.value in labels:
-                value_cell = ws.cell(cell.row, cell.column + 1)
-                values[cell.value] = value_cell.value
-    return values
+    return {
+        'Est. Merchant Annual Savings': ws['C5'].value,
+        'Est. Redo Deal Size': ws['C6'].value,
+        'Spread Available': ws['C7'].value,
+        '% Orders We Could Win': ws['C11'].value,
+        '% Orders Won W/ Spread': ws['C12'].value
+    }
+
+def _normalize_cell_ref(cell_ref):
+    text = str(cell_ref).replace('$', '')
+    if '!' in text:
+        sheet, ref = text.split('!', 1)
+        return f"{sheet}!{ref.upper()}"
+    return text.upper()
+
+class FormulaEvaluator:
+    def __init__(self, ws, overrides=None, data_only_wb=None):
+        self.ws = ws
+        self.overrides = { _normalize_cell_ref(k): v for k, v in (overrides or {}).items() }
+        self.cache = {}
+        self.workbook = ws.parent
+        self.data_only_wb = data_only_wb
+        self._stack = []
+        self._stack_set = set()
+        self._max_depth = 200
+
+    def get(self, cell_ref):
+        return self._eval_cell(_normalize_cell_ref(cell_ref))
+
+    def _eval_cell(self, cell_ref):
+        sheet_name = None
+        ref = cell_ref
+        if '!' in cell_ref:
+            sheet_name, ref = cell_ref.split('!', 1)
+        cache_key = cell_ref if sheet_name else ref
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+        if cache_key in self._stack_set:
+            return ''
+        if len(self._stack) >= self._max_depth:
+            return ''
+        self._stack.append(cache_key)
+        self._stack_set.add(cache_key)
+        if ref in self.overrides and (sheet_name is None or sheet_name == self.ws.title):
+            value = self.overrides[ref]
+            self.cache[cache_key] = value
+            self._stack.pop()
+            self._stack_set.discard(cache_key)
+            return value
+        target_ws = self.ws
+        if sheet_name:
+            target_ws = self.workbook[sheet_name]
+        cell = target_ws[ref]
+        value = cell.value
+        if isinstance(value, str) and value.startswith('='):
+            formula = value[1:]
+            if self.data_only_wb and self._should_use_cached(formula):
+                cached = self._get_cached_value(sheet_name or target_ws.title, ref)
+                if cached is not None:
+                    value = cached
+                else:
+                    value = ''
+                self.cache[cache_key] = value
+                self._stack.pop()
+                self._stack_set.discard(cache_key)
+                return value
+            try:
+                value = self._eval_formula(formula)
+            except Exception:
+                cached = self._get_cached_value(sheet_name or target_ws.title, ref)
+                value = cached if cached is not None else ''
+        if value is None:
+            value = ''
+        self.cache[cache_key] = value
+        self._stack.pop()
+        self._stack_set.discard(cache_key)
+        return value
+
+    def _eval_formula(self, formula):
+        tokens = self._tokenize(formula)
+        parser = _FormulaParser(tokens, self)
+        return parser.parse_expression()
+
+    def _get_cached_value(self, sheet_name, ref):
+        if not self.data_only_wb:
+            return None
+        try:
+            ws = self.data_only_wb[sheet_name]
+        except Exception:
+            return None
+        try:
+            return ws[ref].value
+        except Exception:
+            return None
+
+    def _should_use_cached(self, formula):
+        upper = formula.upper()
+        if any(name in upper for name in ('COUNTIF', 'COUNTIFS', 'SUMIF', 'SUMIFS')):
+            return True
+        if re.search(r"\$?[A-Z]{1,3}:\$?[A-Z]{1,3}", upper):
+            return True
+        return False
+
+    def _split_sheet_ref(self, cell_ref):
+        if '!' in cell_ref:
+            sheet_name, ref = cell_ref.split('!', 1)
+            return sheet_name, _normalize_cell_ref(ref)
+        return None, _normalize_cell_ref(cell_ref)
+
+    def _tokenize(self, formula):
+        tokens = []
+        i = 0
+        length = len(formula)
+        while i < length:
+            ch = formula[i]
+            if ch.isspace():
+                i += 1
+                continue
+            if ch == '"':
+                i += 1
+                start = i
+                while i < length and formula[i] != '"':
+                    i += 1
+                tokens.append(('STRING', formula[start:i]))
+                i += 1
+                continue
+            if ch == "'":
+                i += 1
+                start = i
+                while i < length and formula[i] != "'":
+                    i += 1
+                sheet_name = formula[start:i]
+                i += 1
+                if i < length and formula[i] == '!':
+                    i += 1
+                    cell_start = i
+                    while i < length and (formula[i].isalnum() or formula[i] in '$'):
+                        i += 1
+                    cell_ref = formula[cell_start:i]
+                    tokens.append(('CELL', _normalize_cell_ref(f"{sheet_name}!{cell_ref}")))
+                    continue
+                tokens.append(('IDENT', sheet_name.upper()))
+                continue
+            if ch in '(),:':
+                tokens.append((ch, ch))
+                i += 1
+                continue
+            if ch in '+-*/^':
+                tokens.append(('OP', ch))
+                i += 1
+                continue
+            if ch in '<>=':
+                op = ch
+                if i + 1 < length and formula[i + 1] in '=>':
+                    op += formula[i + 1]
+                    i += 1
+                if op == '<>':
+                    tokens.append(('OP', op))
+                else:
+                    tokens.append(('OP', op))
+                i += 1
+                continue
+            if ch.isdigit() or ch == '.':
+                start = i
+                i += 1
+                while i < length and (formula[i].isdigit() or formula[i] == '.'):
+                    i += 1
+                tokens.append(('NUMBER', formula[start:i]))
+                continue
+            if ch.isalpha() or ch == '$' or ch == '_':
+                start = i
+                i += 1
+                while i < length and (formula[i].isalnum() or formula[i] in '$_'):
+                    i += 1
+                token = formula[start:i]
+                if i < length and formula[i] == '!':
+                    sheet_name = token.replace('$', '')
+                    i += 1
+                    cell_start = i
+                    while i < length and (formula[i].isalnum() or formula[i] in '$'):
+                        i += 1
+                    cell_ref = formula[cell_start:i]
+                    tokens.append(('CELL', _normalize_cell_ref(f"{sheet_name}!{cell_ref}")))
+                elif re.fullmatch(r'\$?[A-Z]{1,3}\$?\d+', token.upper()):
+                    tokens.append(('CELL', _normalize_cell_ref(token)))
+                else:
+                    tokens.append(('IDENT', token.upper()))
+                continue
+            raise ValueError(f"Unsupported token in formula: {formula}")
+        return tokens
+
+class _FormulaParser:
+    def __init__(self, tokens, evaluator):
+        self.tokens = tokens
+        self.pos = 0
+        self.evaluator = evaluator
+
+    def _peek(self):
+        if self.pos >= len(self.tokens):
+            return None
+        return self.tokens[self.pos]
+
+    def _consume(self):
+        tok = self._peek()
+        if tok is not None:
+            self.pos += 1
+        return tok
+
+    def _match(self, value):
+        tok = self._peek()
+        if tok and tok[0] == value:
+            self.pos += 1
+            return True
+        return False
+
+    def parse_expression(self):
+        return self._parse_comparison()
+
+    def _parse_comparison(self):
+        left = self._parse_additive()
+        tok = self._peek()
+        if tok and tok[0] == 'OP' and tok[1] in ('=', '<>', '<', '>', '<=', '>='):
+            op = self._consume()[1]
+            right = self._parse_additive()
+            return self._compare(op, left, right)
+        return left
+
+    def _parse_additive(self):
+        value = self._parse_term()
+        while True:
+            tok = self._peek()
+            if tok and tok[0] == 'OP' and tok[1] in ('+', '-'):
+                op = self._consume()[1]
+                rhs = self._parse_term()
+                value = self._apply_op(op, value, rhs)
+            else:
+                break
+        return value
+
+    def _parse_term(self):
+        value = self._parse_factor()
+        while True:
+            tok = self._peek()
+            if tok and tok[0] == 'OP' and tok[1] in ('*', '/'):
+                op = self._consume()[1]
+                rhs = self._parse_factor()
+                value = self._apply_op(op, value, rhs)
+            else:
+                break
+        return value
+
+    def _parse_factor(self):
+        tok = self._peek()
+        if tok is None:
+            return ''
+        if tok[0] == 'OP' and tok[1] in ('+', '-'):
+            op = self._consume()[1]
+            value = self._parse_factor()
+            return self._apply_op(op, 0, value) if op == '-' else value
+        if tok[0] == 'NUMBER':
+            self._consume()
+            return float(tok[1])
+        if tok[0] == 'STRING':
+            self._consume()
+            return tok[1]
+        if tok[0] == 'CELL':
+            self._consume()
+            if self._match(':'):
+                end_tok = self._consume()
+                if not end_tok:
+                    raise ValueError('Invalid range')
+                end_ref = None
+                if end_tok[0] == 'CELL':
+                    end_ref = end_tok[1]
+                else:
+                    end_ref = self._coerce_range_end(tok[1], end_tok)
+                if not end_ref:
+                    raise ValueError('Invalid range')
+                return self._eval_range(tok[1], end_ref)
+            return self.evaluator._eval_cell(tok[1])
+        if tok[0] == 'IDENT':
+            name = self._consume()[1]
+            if not self._match('('):
+                return name
+            args = []
+            if not self._match(')'):
+                while True:
+                    args.append(self.parse_expression())
+                    if self._match(')'):
+                        break
+                    if not self._match(','):
+                        raise ValueError('Expected comma')
+            return self._eval_function(name, args)
+        if tok[0] == '(':
+            self._consume()
+            value = self.parse_expression()
+            if not self._match(')'):
+                raise ValueError('Expected closing parenthesis')
+            return value
+        raise ValueError('Unsupported expression')
+
+    def _coerce_range_end(self, start_cell, end_tok):
+        if end_tok[0] == 'IDENT':
+            token = end_tok[1]
+            if re.fullmatch(r'\$?[A-Z]{1,3}', token):
+                col = token.replace('$', '')
+                return _normalize_cell_ref(f"{col}1048576")
+        if end_tok[0] == 'NUMBER':
+            try:
+                row = int(float(end_tok[1]))
+            except Exception:
+                return None
+            _, start_ref = self.evaluator._split_sheet_ref(start_cell)
+            match = re.match(r'([A-Z]{1,3})', start_ref)
+            if not match:
+                return None
+            col = match.group(1)
+            return _normalize_cell_ref(f"{col}{row}")
+        return None
+
+    def _eval_range(self, start, end):
+        start_sheet, start_ref = self.evaluator._split_sheet_ref(start)
+        end_sheet, end_ref = self.evaluator._split_sheet_ref(end)
+        sheet_name = start_sheet or end_sheet
+        target_ws = self.evaluator.ws
+        if sheet_name:
+            target_ws = self.evaluator.workbook[sheet_name]
+        min_col, min_row, max_col, max_row = range_boundaries(f"{start_ref}:{end_ref}")
+        values = []
+        for row in target_ws.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col):
+            for cell in row:
+                coord = _normalize_cell_ref(cell.coordinate)
+                if sheet_name:
+                    coord = f"{sheet_name}!{coord}"
+                values.append(self.evaluator._eval_cell(coord))
+        return values
+
+    def _apply_op(self, op, left, right):
+        if op in ('+', '-', '*', '/'):
+            left_num = self._to_number(left)
+            right_num = self._to_number(right)
+            if op == '+':
+                return left_num + right_num
+            if op == '-':
+                return left_num - right_num
+            if op == '*':
+                return left_num * right_num
+            if op == '/':
+                return left_num / right_num if right_num != 0 else 0
+        return 0
+
+    def _compare(self, op, left, right):
+        left_val, right_val, numeric = self._coerce_compare(left, right)
+        if op == '=':
+            return left_val == right_val
+        if op == '<>':
+            return left_val != right_val
+        if op == '<':
+            return left_val < right_val
+        if op == '>':
+            return left_val > right_val
+        if op == '<=':
+            return left_val <= right_val
+        if op == '>=':
+            return left_val >= right_val
+        return False
+
+    def _eval_function(self, name, args):
+        if name == 'IF':
+            condition = args[0] if args else ''
+            true_val = args[1] if len(args) > 1 else ''
+            false_val = args[2] if len(args) > 2 else ''
+            return true_val if self._truthy(condition) else false_val
+        if name == 'OR':
+            return any(self._truthy(arg) for arg in args)
+        if name == 'AND':
+            return all(self._truthy(arg) for arg in args)
+        if name == 'IFERROR':
+            if not args:
+                return ''
+            try:
+                return args[0]
+            except Exception:
+                return args[1] if len(args) > 1 else ''
+        if name == 'SUM':
+            total = 0.0
+            for arg in args:
+                if isinstance(arg, list):
+                    for item in arg:
+                        total += self._to_number(item)
+                else:
+                    total += self._to_number(arg)
+            return total
+        return ''
+
+    def _truthy(self, value):
+        if isinstance(value, bool):
+            return value
+        if value in ('', None):
+            return False
+        if isinstance(value, (int, float)):
+            return value != 0
+        return True
+
+    def _to_number(self, value):
+        if value is None or value == '':
+            return 0.0
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return float(str(value).replace(',', ''))
+        except Exception:
+            return 0.0
+
+    def _coerce_compare(self, left, right):
+        if self._is_number_like(left) and self._is_number_like(right):
+            return self._to_number(left), self._to_number(right), True
+        return str(left), str(right), False
+
+    def _is_number_like(self, value):
+        if isinstance(value, (int, float)):
+            return True
+        try:
+            float(str(value).replace(',', ''))
+            return True
+        except Exception:
+            return False
 
 def _apply_redo_selection(ws, selected_dashboard):
     header_row_idx, label_col, use_col = _find_pricing_section(ws, 'Redo Carriers')
@@ -639,6 +1359,46 @@ def _apply_redo_selection(ws, selected_dashboard):
             target_cell.value = 'No'
             continue
         target_cell.value = 'Yes' if normalized in selection else 'No'
+
+def _build_redo_overrides(ws, selected_dashboard):
+    header_row_idx, label_col, use_col = _find_pricing_section(ws, 'Redo Carriers')
+    if header_row_idx is None:
+        return {}
+    selection = _redo_selection_from_dashboard(selected_dashboard)
+    stop_titles = {'MERCHANT CARRIERS', 'MERCHANT CARRIER', 'MERCHANT SERVICE LEVELS'}
+    overrides = {}
+    for row_idx, label_val in _iter_section_rows(ws, header_row_idx + 1, label_col, stop_titles):
+        normalized = normalize_redo_label(label_val)
+        coord = ws.cell(row_idx, use_col).coordinate
+        if 'FIRST MILE' in normalized:
+            overrides[coord] = 'No'
+            continue
+        overrides[coord] = 'Yes' if normalized in selection else 'No'
+    return overrides
+
+def _calculate_metrics_from_formulas(rate_card_path, selected_dashboard):
+    wb = _load_workbook_with_retry(rate_card_path, data_only=False, read_only=True)
+    data_wb = _load_workbook_with_retry(rate_card_path, data_only=True, read_only=True)
+    if 'Pricing & Summary' not in wb.sheetnames:
+        wb.close()
+        data_wb.close()
+        raise ValueError('Pricing & Summary sheet not found')
+    ws = wb['Pricing & Summary']
+    metrics = _calculate_metrics_from_formulas_ws(ws, selected_dashboard, data_wb)
+    wb.close()
+    data_wb.close()
+    return metrics
+
+def _calculate_metrics_from_formulas_ws(ws, selected_dashboard, data_only_wb=None):
+    overrides = _build_redo_overrides(ws, selected_dashboard)
+    evaluator = FormulaEvaluator(ws, overrides, data_only_wb=data_only_wb)
+    return {
+        'Est. Merchant Annual Savings': evaluator.get('C5'),
+        'Est. Redo Deal Size': evaluator.get('C6'),
+        'Spread Available': evaluator.get('C7'),
+        '% Orders We Could Win': evaluator.get('C11'),
+        '% Orders Won W/ Spread': evaluator.get('C12')
+    }
 
 RATE_TABLE_COLUMNS = {
     'UPS Ground': ('N', 'U'),
@@ -660,7 +1420,7 @@ CARRIER_PRIORITY = [
 @lru_cache(maxsize=4)
 def _get_pricing_controls(template_path_str):
     path = Path(template_path_str)
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = _load_workbook_with_retry(path, data_only=True)
     ws = wb['Pricing & Summary']
     controls = {
         'k2': ws['K2'].value,
@@ -679,7 +1439,7 @@ def _get_pricing_controls(template_path_str):
 @lru_cache(maxsize=4)
 def _load_rate_tables(template_path_str):
     path = Path(template_path_str)
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = _load_workbook_with_retry(path, data_only=True)
     ws = wb['Redo Rate Cards']
     tables = {}
     for carrier, (start_col, end_col) in RATE_TABLE_COLUMNS.items():
@@ -774,7 +1534,7 @@ def _load_carrier_details_cached(rate_card_path_str, source_mtime):
     path = Path(rate_card_path_str)
     if not path.exists():
         return {}
-    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    wb = _load_workbook_with_retry(path, data_only=True, read_only=True)
     if 'Pricing & Summary' not in wb.sheetnames:
         wb.close()
         return {}
@@ -854,37 +1614,6 @@ def _start_carrier_details_cache(job_dir, source_mtime, selection_key, selected_
         details = {}
     _write_carrier_details_cache(job_dir, source_mtime, selection_key, details)
     return details, False
-
-    try:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_dir_path = Path(tmp_dir)
-            temp_input = tmp_dir_path / source_path.name
-            shutil.copy2(source_path, temp_input)
-
-            wb = openpyxl.load_workbook(temp_input, data_only=False)
-            if 'Pricing & Summary' not in wb.sheetnames:
-                wb.close()
-                return {}
-            ws = wb['Pricing & Summary']
-            _apply_redo_selection(ws, selected_dashboard)
-            pct_off, dollar_off = _usps_market_discount_values(mapping_config)
-            ws['C19'] = pct_off
-            ws['C20'] = dollar_off
-            wb.save(temp_input)
-            wb.close()
-
-            recalculated_path = _recalc_workbook(temp_input, tmp_dir_path, profile_dir=profile_dir)
-            result_wb = openpyxl.load_workbook(recalculated_path, data_only=True, read_only=True)
-            result_ws = result_wb['Pricing & Summary']
-            details = _read_carrier_details_from_ws(result_ws)
-            result_wb.close()
-            return details
-    except Exception:
-        try:
-            source_mtime = int(source_path.stat().st_mtime)
-        except Exception:
-            source_mtime = 0
-        return _load_carrier_details(source_path, source_mtime)
 
 def _mode_or_min(series):
     series = series.dropna()
@@ -1305,188 +2034,38 @@ def _calculate_carrier_details_fast(job_dir, selected_dashboard, mapping_config)
         }
     return details
 
-def _recalc_workbook(input_path, output_dir, profile_dir=None):
-    soffice = shutil.which('soffice')
-    if not soffice:
-        candidate = Path('/Applications/LibreOffice.app/Contents/MacOS/soffice')
-        if candidate.exists():
-            soffice = str(candidate)
-    if not soffice:
-        raise RuntimeError('LibreOffice (soffice) not found')
-    cmd = [
-        soffice,
-        '--headless',
-        '--invisible',
-        '--nologo',
-        '--nofirststartwizard',
-        '--norestore',
-        '--nocrashreport'
-    ]
-    if profile_dir:
-        cmd.append(f"--env:UserInstallation={Path(profile_dir).resolve().as_uri()}")
-    cmd.extend(['--convert-to', 'xlsx', '--outdir', str(output_dir), str(input_path)])
-    subprocess.run(
-        cmd,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    candidates = list(Path(output_dir).glob('*.xlsx'))
-    if not candidates:
-        raise RuntimeError('LibreOffice did not produce an output file')
-    return max(candidates, key=lambda p: p.stat().st_mtime)
-
-def _recalc_workbooks(input_paths, output_dir, profile_dir=None):
-    if not input_paths:
-        return {}
-    soffice = shutil.which('soffice')
-    if not soffice:
-        candidate = Path('/Applications/LibreOffice.app/Contents/MacOS/soffice')
-        if candidate.exists():
-            soffice = str(candidate)
-    if not soffice:
-        raise RuntimeError('LibreOffice (soffice) not found')
-    cmd = [
-        soffice,
-        '--headless',
-        '--invisible',
-        '--nologo',
-        '--nofirststartwizard',
-        '--norestore',
-        '--nocrashreport'
-    ]
-    if profile_dir:
-        cmd.append(f"--env:UserInstallation={Path(profile_dir).resolve().as_uri()}")
-    cmd.extend(['--convert-to', 'xlsx', '--outdir', str(output_dir)])
-    cmd.extend([str(p) for p in input_paths])
-    subprocess.run(
-        cmd,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    outputs = list(Path(output_dir).glob('*.xlsx'))
-    if not outputs:
-        raise RuntimeError('LibreOffice did not produce output files')
-    by_stem = {}
-    for path in outputs:
-        by_stem.setdefault(path.stem, []).append(path)
-    mapping = {}
-    for input_path in input_paths:
-        stem = Path(input_path).stem
-        candidates = by_stem.get(stem, [])
-        if not candidates:
-            continue
-        mapping[input_path] = max(candidates, key=lambda p: p.stat().st_mtime)
-    if len(mapping) != len(input_paths):
-        missing = [p for p in input_paths if p not in mapping]
-        raise RuntimeError(f'LibreOffice did not produce output for: {missing}')
-    return mapping
-
 def _calculate_metrics(job_dir, selected_dashboard, profile_dir=None):
-    if FAST_DASHBOARD_METRICS:
-        mapping_file = job_dir / 'mapping.json'
-        mapping_config = {}
-        if mapping_file.exists():
-            with open(mapping_file, 'r') as f:
-                mapping_config = json.load(f)
-        try:
-            return _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config)
-        except Exception:
-            pass
-
+    mapping_file = job_dir / 'mapping.json'
+    mapping_config = {}
+    if mapping_file.exists():
+        with open(mapping_file, 'r') as f:
+            mapping_config = json.load(f)
     rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
     if not rate_card_files:
         raise FileNotFoundError('Rate card not found')
-    source_path = rate_card_files[0]
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_dir_path = Path(tmp_dir)
-        temp_input = tmp_dir_path / source_path.name
-        shutil.copy2(source_path, temp_input)
-
-        wb = openpyxl.load_workbook(temp_input, data_only=False)
-        if 'Pricing & Summary' not in wb.sheetnames:
-            wb.close()
-            raise ValueError('Pricing & Summary sheet not found')
-        ws = wb['Pricing & Summary']
-        _apply_redo_selection(ws, selected_dashboard)
-        wb.save(temp_input)
-        wb.close()
-
-        recalculated_path = _recalc_workbook(temp_input, tmp_dir_path, profile_dir=profile_dir)
-        result_wb = openpyxl.load_workbook(recalculated_path, data_only=True, read_only=True)
-        result_ws = result_wb['Pricing & Summary']
-        metrics = _read_summary_metrics(result_ws)
-        result_wb.close()
-    return metrics
+    return _calculate_metrics_from_formulas(rate_card_files[0], selected_dashboard)
 
 def _calculate_metrics_batch(job_dir, selections, profile_dir=None):
-    if FAST_DASHBOARD_METRICS:
-        mapping_file = job_dir / 'mapping.json'
-        mapping_config = {}
-        if mapping_file.exists():
-            with open(mapping_file, 'r') as f:
-                mapping_config = json.load(f)
-        results = {}
-        for key, selected_dashboard in selections.items():
-            results[key] = _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config)
-        return results
-
     rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
     if not rate_card_files:
-        raise FileNotFoundError('Rate card not found')
+        return {}
     source_path = rate_card_files[0]
+    try:
+        wb = _load_workbook_with_retry(source_path, data_only=False, read_only=True)
+        data_wb = _load_workbook_with_retry(source_path, data_only=True, read_only=True)
+    except Exception:
+        return {}
+    if 'Pricing & Summary' not in wb.sheetnames:
+        wb.close()
+        data_wb.close()
+        return {}
+    ws = wb['Pricing & Summary']
     results = {}
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_dir_path = Path(tmp_dir)
-        input_paths = []
-        key_to_input = {}
-        for key, selected_dashboard in selections.items():
-            safe_key = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(key)).strip('_') or 'selection'
-            temp_input = tmp_dir_path / f"{safe_key}-{source_path.name}"
-            shutil.copy2(source_path, temp_input)
-
-            wb = openpyxl.load_workbook(temp_input, data_only=False)
-            if 'Pricing & Summary' not in wb.sheetnames:
-                wb.close()
-                raise ValueError('Pricing & Summary sheet not found')
-            ws = wb['Pricing & Summary']
-            _apply_redo_selection(ws, selected_dashboard)
-            wb.save(temp_input)
-            wb.close()
-
-            input_paths.append(temp_input)
-            key_to_input[key] = temp_input
-
-        output_map = _recalc_workbooks(input_paths, tmp_dir_path, profile_dir=profile_dir)
-        for key, input_path in key_to_input.items():
-            output_path = output_map.get(input_path)
-            if not output_path:
-                results[key] = {}
-                continue
-            result_wb = openpyxl.load_workbook(output_path, data_only=True, read_only=True)
-            result_ws = result_wb['Pricing & Summary']
-            results[key] = _read_summary_metrics(result_ws)
-            result_wb.close()
+    for key, selected_dashboard in selections.items():
+        results[key] = _calculate_metrics_from_formulas_ws(ws, selected_dashboard, data_only_wb=data_wb)
+    wb.close()
+    data_wb.close()
     return results
-
-def _get_lo_profile(job_dir, suffix=None):
-    base_name = Path(job_dir).name
-    if suffix:
-        safe_suffix = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(suffix)).strip('_')
-        if safe_suffix:
-            base_name = f"{base_name}-{safe_suffix}"
-    profile_dir = (Path(tempfile.gettempdir()) / f"lo-profile-{base_name}").resolve()
-    lock_path = profile_dir / 'lock'
-    if lock_path.exists():
-        try:
-            age = time.time() - lock_path.stat().st_mtime
-        except Exception:
-            age = None
-        if age is None or age > 120:
-            shutil.rmtree(profile_dir, ignore_errors=True)
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    return profile_dir
 
 def _cache_path_for_job(job_dir):
     return job_dir / 'dashboard_breakdown.json'
@@ -1496,6 +2075,108 @@ def _summary_cache_path(job_dir):
 
 def _selection_cache_key(selected_dashboard):
     return '|'.join(sorted(selected_dashboard))
+
+def _dashboard_cache_sheet_name():
+    return 'Dashboard Cache'
+
+def _dashboard_cache_version():
+    return 2
+
+def _read_dashboard_cache(rate_card_path):
+    if not rate_card_path or not Path(rate_card_path).exists():
+        return {}
+    try:
+        wb = openpyxl.load_workbook(rate_card_path, data_only=True, read_only=True)
+    except Exception:
+        return {}
+    if _dashboard_cache_sheet_name() not in wb.sheetnames:
+        wb.close()
+        return {}
+    ws = wb[_dashboard_cache_sheet_name()]
+    rows = ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True)
+    header_row = next(rows, None)
+    if not header_row:
+        wb.close()
+        return {}
+    headers = [str(h or '').strip() for h in header_row]
+    if 'Cache Version' not in headers:
+        wb.close()
+        return {}
+    header_index = {name: idx for idx, name in enumerate(headers)}
+    selection_idx = header_index.get('Selection Key')
+    if selection_idx is None:
+        wb.close()
+        return {}
+    version_idx = header_index.get('Cache Version')
+    cache = {}
+    for row in rows:
+        if not row:
+            continue
+        selection_key = row[selection_idx]
+        if not selection_key:
+            continue
+        if version_idx is not None:
+            row_version = row[version_idx]
+            if row_version != _dashboard_cache_version():
+                continue
+        metrics = {
+            'Est. Merchant Annual Savings': row[header_index.get('Est. Merchant Annual Savings', -1)] if header_index.get('Est. Merchant Annual Savings') is not None else None,
+            'Est. Redo Deal Size': row[header_index.get('Est. Redo Deal Size', -1)] if header_index.get('Est. Redo Deal Size') is not None else None,
+            'Spread Available': row[header_index.get('Spread Available', -1)] if header_index.get('Spread Available') is not None else None,
+            '% Orders We Could Win': row[header_index.get('% Orders We Could Win', -1)] if header_index.get('% Orders We Could Win') is not None else None,
+            '% Orders Won W/ Spread': row[header_index.get('% Orders Won W/ Spread', -1)] if header_index.get('% Orders Won W/ Spread') is not None else None
+        }
+        cache[str(selection_key)] = metrics
+    wb.close()
+    return cache
+
+def _ensure_dashboard_cache_sheet(wb):
+    sheet_name = _dashboard_cache_sheet_name()
+    if sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+    else:
+        ws = wb.create_sheet(sheet_name)
+    headers = [
+        'Selection Key',
+        'Est. Merchant Annual Savings',
+        'Est. Redo Deal Size',
+        'Spread Available',
+        '% Orders We Could Win',
+        '% Orders Won W/ Spread',
+        'Cache Version'
+    ]
+    if ws.max_row < 1:
+        ws.append(headers)
+    else:
+        existing = [str(cell.value or '').strip() for cell in ws[1]]
+        if existing[:len(headers)] != headers:
+            ws.delete_rows(1, ws.max_row)
+            ws.append(headers)
+    return ws
+
+def _write_dashboard_cache_entry(rate_card_path, selection_key, metrics):
+    if not rate_card_path or not Path(rate_card_path).exists():
+        return
+    wb = _load_workbook_with_retry(rate_card_path, data_only=False)
+    ws = _ensure_dashboard_cache_sheet(wb)
+    selection_key = str(selection_key)
+    selection_row = None
+    for row_idx in range(2, ws.max_row + 1):
+        cell_value = ws.cell(row=row_idx, column=1).value
+        if str(cell_value or '') == selection_key:
+            selection_row = row_idx
+            break
+    if selection_row is None:
+        selection_row = ws.max_row + 1
+    ws.cell(row=selection_row, column=1, value=selection_key)
+    ws.cell(row=selection_row, column=2, value=metrics.get('Est. Merchant Annual Savings'))
+    ws.cell(row=selection_row, column=3, value=metrics.get('Est. Redo Deal Size'))
+    ws.cell(row=selection_row, column=4, value=metrics.get('Spread Available'))
+    ws.cell(row=selection_row, column=5, value=metrics.get('% Orders We Could Win'))
+    ws.cell(row=selection_row, column=6, value=metrics.get('% Orders Won W/ Spread'))
+    ws.cell(row=selection_row, column=7, value=_dashboard_cache_version())
+    wb.save(rate_card_path)
+    wb.close()
 
 def _summary_job_key(job_dir, source_mtime, selection_key):
     return f"{job_dir.name}:{source_mtime}:{selection_key}"
@@ -1562,11 +2243,8 @@ def _build_breakdown_cache(job_dir, source_mtime, job_key, selected_dashboard=No
         selections = {carrier: [carrier] for carrier in carriers}
         if selected_dashboard and selection_key:
             selections['__overall__'] = list(selected_dashboard)
-        profile_dir = _get_lo_profile(job_dir, suffix='breakdown')
         try:
-            metrics_map = _calculate_metrics_batch(job_dir, selections, profile_dir)
-        except subprocess.CalledProcessError:
-            metrics_map = _calculate_metrics_batch(job_dir, selections, profile_dir=None)
+            metrics_map = _calculate_metrics_batch(job_dir, selections)
         except Exception:
             metrics_map = {}
 
@@ -1586,13 +2264,8 @@ def _build_breakdown_cache(job_dir, source_mtime, job_key, selected_dashboard=No
 
 def _build_summary_cache(job_dir, source_mtime, selection_key, selected_dashboard, job_key):
     try:
-        profile_dir = _get_lo_profile(job_dir)
-        try:
-            metrics = _calculate_metrics(job_dir, selected_dashboard, profile_dir)
-        except subprocess.CalledProcessError:
-            metrics = _calculate_metrics(job_dir, selected_dashboard, profile_dir=None)
+        metrics = _calculate_metrics(job_dir, selected_dashboard)
         _write_summary_cache(job_dir, source_mtime, selection_key, metrics)
-        _start_breakdown_cache(job_dir, source_mtime)
     finally:
         with summary_jobs_lock:
             summary_jobs.pop(job_key, None)
@@ -1906,61 +2579,105 @@ def _carrier_distribution(job_dir, mapping_config, available_carriers):
 
 def suggest_mapping(invoice_columns, standard_field):
     """Suggest best matching column for a standard field"""
-    invoice_lower = [c.lower() for c in invoice_columns]
+    invoice_lower = [str(c).lower() for c in invoice_columns]
     field_lower = standard_field.lower()
+
+    def _compact(text):
+        return re.sub(r'[^a-z0-9]+', '', text.lower())
+
+    def _tokenize(text):
+        cleaned = re.sub(r'[^a-z0-9]+', ' ', text.lower()).strip()
+        return cleaned.split()
     
     def _is_bad_label_cost(col_text):
         bad_tokens = ('insurance', 'labelcreatedate', 'create date', 'createdate', 'shipdate', 'date')
         return any(token in col_text for token in bad_tokens)
 
-    # Exact match
+    compact_field = _compact(standard_field)
     for i, col in enumerate(invoice_lower):
-        if field_lower in col or col in field_lower:
+        if _compact(col) == compact_field:
             if standard_field == 'Label Cost' and _is_bad_label_cost(col):
                 continue
             return invoice_columns[i]
-    
-    # Partial matches
-    keywords = {
-        'Order Number': ['order', 'number', 'order_number'],
-        'Order Date': ['date', 'shipped', 'order_date'],
-        'Zip': ['zip', 'postal', 'postal_code'],
-        'Weight': ['weight', 'oz', 'ounces', 'lb', 'lbs', 'pound', 'pounds', 'kg', 'kilogram', 'kilograms'],
-        'Shipping Carrier': ['carrier'],
-        'Shipping Service': ['service', 'shipping_service', 'shippingservice'],
-        'Package Height': ['height'],
-        'Package Width': ['width'],
-        'Package Length': ['length'],
-        'Label Cost': ['cost', 'shipping_rate', 'rate', 'label', 'carrier fee', 'carrier_fee', 'fee']
+
+    rules = {
+        'Order Number': {
+            'positive': ['order number', 'order #', 'order no', 'order id', 'ordernumber', 'orderid', 'order'],
+            'negative': ['date', 'ship', 'time']
+        },
+        'Order Date': {
+            'positive': ['order date', 'ship date', 'shipped date', 'orderdate', 'shipdate', 'date', 'shipped'],
+            'negative': ['number', 'id', '#', 'qty', 'count']
+        },
+        'Zip': {
+            'positive': ['zip', 'postal', 'postal code', 'zipcode', 'postalcode'],
+            'negative': []
+        },
+        'Weight': {
+            'positive': ['weight', 'oz', 'ounce', 'lb', 'lbs', 'pound', 'kg', 'kilogram'],
+            'negative': ['unit']
+        },
+        'Shipping Carrier': {
+            'positive': ['carrier', 'shipper', 'courier'],
+            'negative': ['service', 'method', 'level']
+        },
+        'Shipping Service': {
+            'positive': ['service', 'method', 'level'],
+            'negative': ['carrier']
+        },
+        'Package Height': {
+            'positive': ['height', 'ht'],
+            'negative': ['weight', 'lb', 'lbs', 'oz', 'ounce', 'unit']
+        },
+        'Package Width': {
+            'positive': ['width', 'wd'],
+            'negative': ['weight', 'lb', 'lbs', 'oz', 'ounce', 'unit']
+        },
+        'Package Length': {
+            'positive': ['length', 'len'],
+            'negative': ['weight', 'lb', 'lbs', 'oz', 'ounce', 'unit']
+        },
+        'Zone': {
+            'positive': ['zone'],
+            'negative': []
+        },
+        'Label Cost': {
+            'positive': ['label cost', 'shipping rate', 'rate', 'postage', 'cost', 'carrier fee', 'fee'],
+            'negative': ['insurance', 'labelcreatedate', 'createdate', 'shipdate', 'date']
+        }
     }
-    
-    if standard_field in keywords:
-        if standard_field == 'Label Cost':
-            candidates = []
-            for i, col in enumerate(invoice_lower):
-                if _is_bad_label_cost(col):
-                    continue
-                score = 0
-                if 'carrier fee' in col or 'carrier_fee' in col:
-                    score += 100
-                if 'fee' in col:
-                    score += 30
-                if 'rate' in col or 'shipping_rate' in col:
-                    score += 20
-                if 'cost' in col or 'label' in col:
-                    score += 10
-                if score:
-                    candidates.append((score, i))
-            if candidates:
-                candidates.sort(reverse=True)
-                return invoice_columns[candidates[0][1]]
-        for keyword in keywords[standard_field]:
-            for i, col in enumerate(invoice_lower):
-                if keyword in col:
-                    if standard_field == 'Label Cost' and _is_bad_label_cost(col):
-                        continue
-                    return invoice_columns[i]
-    
+
+    rule = rules.get(standard_field)
+    if not rule:
+        return None
+
+    best = (0, None)
+    for idx, col in enumerate(invoice_lower):
+        if standard_field == 'Label Cost' and _is_bad_label_cost(col):
+            continue
+        tokens = _tokenize(col)
+        col_text = f" {' '.join(tokens)} "
+        score = 0
+        for phrase in rule['positive']:
+            if phrase in col:
+                score += 10
+            if phrase in col_text:
+                score += 10
+        for token in rule['positive']:
+            if token in tokens:
+                score += 5
+        for token in rule['negative']:
+            if token in tokens or token in col:
+                score -= 10
+        if standard_field == 'Order Date' and not any(t in tokens for t in ['date', 'ship', 'shipped']):
+            score = 0
+        if standard_field == 'Order Number' and any(t in tokens for t in ['date', 'ship', 'shipped']):
+            score -= 10
+        if score > best[0]:
+            best = (score, idx)
+
+    if best[1] is not None and best[0] > 0:
+        return invoice_columns[best[1]]
     return None
 
 def clean_old_runs():
@@ -2104,8 +2821,7 @@ def upload_page():
 def deal_sizing_page():
     return render_template('deal_sizing.html')
 
-@app.route('/admin')
-def admin_page():
+def _build_admin_view_data():
     _ensure_admin_log()
     wb = openpyxl.load_workbook(ADMIN_LOG_PATH, data_only=True)
     deal_ws = wb['Deal sizing'] if 'Deal sizing' in wb.sheetnames else None
@@ -2113,12 +2829,29 @@ def admin_page():
 
     def _sheet_data(ws):
         if ws is None:
-            return {'headers': [], 'rows': []}
+            return {'headers': [], 'rows': [], 'row_ids': []}
         headers = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
         rows = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
+        row_ids = []
+        for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             rows.append(list(row))
-        return {'headers': headers, 'rows': rows}
+            row_ids.append(idx)
+        if 'Timestamp' in headers:
+            ts_idx = headers.index('Timestamp')
+            def _parse_ts(value):
+                if not value:
+                    return datetime.min
+                if isinstance(value, datetime):
+                    return value
+                try:
+                    return datetime.fromisoformat(str(value))
+                except Exception:
+                    return datetime.min
+            combined = list(zip(rows, row_ids))
+            combined.sort(key=lambda item: _parse_ts(item[0][ts_idx] if ts_idx < len(item[0]) else None), reverse=True)
+            rows = [item[0] for item in combined]
+            row_ids = [item[1] for item in combined]
+        return {'headers': headers, 'rows': rows, 'row_ids': row_ids}
 
     deal_data = _sheet_data(deal_ws)
     rate_data = _sheet_data(rate_ws)
@@ -2299,7 +3032,7 @@ def admin_page():
                     'UniUni Eligible'
                 ):
                     return 'Merchant Info'
-                if header.endswith('Mapped To'):
+                if header.endswith('Mapped To') or header == 'Units':
                     return 'Mappings'
                 if header in ('Merchant Carriers', 'Merchant Service Levels'):
                     return 'Merchant Pricing'
@@ -2381,6 +3114,7 @@ def admin_page():
     def _build_deal_sizing_view(data):
         headers = data.get('headers') or []
         rows = data.get('rows') or []
+        row_ids = data.get('row_ids') or []
         header_index = {str(header): idx for idx, header in enumerate(headers)}
 
         def value_for(row, *keys):
@@ -2391,6 +3125,7 @@ def admin_page():
             return ''
 
         target_headers = [
+            'Timestamp',
             'Merchant Name',
             'SE/AE On Deal',
             'Annual Orders',
@@ -2419,6 +3154,7 @@ def admin_page():
 
         updated_rows = []
         for row in rows:
+            timestamp = value_for(row, 'Timestamp')
             merchant_name = value_for(row, 'Merchant Name', 'Merchant')
             se_ae_on_deal = value_for(row, 'SE/AE On Deal')
             annual_orders = value_for(row, 'Annual Orders')
@@ -2457,6 +3193,7 @@ def admin_page():
             adjusted_orders_value = adjusted_orders if adjusted_orders else value_for(row, 'Adjusted Annual Orders')
 
             updated_rows.append([
+                timestamp,
                 merchant_name,
                 se_ae_on_deal,
                 annual_orders,
@@ -2483,7 +3220,7 @@ def admin_page():
                 total_deal_size
             ])
 
-        return {'headers': target_headers, 'rows': updated_rows}
+        return {'headers': target_headers, 'rows': updated_rows, 'row_ids': row_ids}
     if rate_data.get('headers'):
         headers = rate_data['headers']
         header_index = {str(header): idx for idx, header in enumerate(headers)}
@@ -2502,7 +3239,11 @@ def admin_page():
         dollar_off_idx = header_index.get('USPS Market $ Off')
 
         standard_fields = STANDARD_FIELDS['required'] + STANDARD_FIELDS['optional']
-        mapping_headers = [f'{field} Mapped To' for field in standard_fields]
+        mapping_headers = []
+        for field in standard_fields:
+            mapping_headers.append(f'{field} Mapped To')
+            if field == 'Weight':
+                mapping_headers.append('Units')
         breakdown_headers = [f'{carrier} Breakdown' for carrier in DASHBOARD_CARRIERS]
 
         rate_headers = [
@@ -2634,7 +3375,11 @@ def admin_page():
                 uniuni_eligible = eligibility.get('uniuni_eligible_final')
 
             mapped_values = mapping_config.get('mapping', {}) if mapping_config else {}
-            mapped_columns = [mapped_values.get(field, '') for field in standard_fields]
+            mapped_columns = []
+            for field in standard_fields:
+                mapped_columns.append(mapped_values.get(field, ''))
+                if field == 'Weight':
+                    mapped_columns.append(mapped_values.get('Weight Unit', ''))
 
             excluded_carriers = merchant_pricing.get('excluded_carriers', []) if merchant_pricing else []
             merchant_carriers = _summarize_list(_available_carriers_for_job(job_dir, mapping_config, excluded_carriers)) if job_id else ''
@@ -2649,18 +3394,24 @@ def admin_page():
 
             summary_metrics = {}
             breakdown_metrics = {}
+            source_mtime = None
+            selection_key = None
             if job_id and job_dir.exists():
                 rate_cards = list(job_dir.glob('* - Rate Card.xlsx'))
                 if rate_cards:
                     try:
-                        summary_metrics = _calculate_metrics(job_dir, selected_dashboard)
+                        source_mtime = int(rate_cards[0].stat().st_mtime)
                     except Exception:
-                        summary_metrics = {}
-                    try:
-                        selections = {carrier: [carrier] for carrier in DASHBOARD_CARRIERS}
-                        breakdown_metrics = _calculate_metrics_batch(job_dir, selections)
-                    except Exception:
-                        breakdown_metrics = {}
+                        source_mtime = 0
+                    selection_key = _selection_cache_key(selected_dashboard)
+                    summary_metrics = _read_summary_cache(job_dir, source_mtime, selection_key) or {}
+                    breakdown_cached, _ = _read_breakdown_cache(job_dir, source_mtime)
+                    if breakdown_cached is not None:
+                        breakdown_metrics = {
+                            entry.get('carrier'): entry.get('metrics', {})
+                            for entry in breakdown_cached
+                            if entry.get('carrier') in DASHBOARD_CARRIERS
+                        }
 
             breakdown_cells = []
             for carrier in DASHBOARD_CARRIERS:
@@ -2684,10 +3435,11 @@ def admin_page():
             adjusted_orders = _effective_orders(deal_annual_orders, deal_comment_sold, deal_ebay, deal_live_selling)
             effective_orders = adjusted_orders * (deal_attach_rate / 100) if deal_attach_rate else adjusted_orders
             carrier_spread_total = 0.0
-            if job_id and job_dir.exists() and selected_dashboard:
+            if job_id and job_dir.exists() and selected_dashboard and source_mtime is not None and selection_key:
                 try:
-                    details = _calculate_carrier_details_fast(job_dir, selected_dashboard, mapping_config)
-                    carrier_spread_total = _deal_spread_from_details(list(details.values()), effective_orders)
+                    details = _read_carrier_details_cache(job_dir, source_mtime, selection_key) or {}
+                    if details:
+                        carrier_spread_total = _deal_spread_from_details(list(details.values()), effective_orders)
                 except Exception:
                     carrier_spread_total = 0.0
             label_fee_total = deal_per_label_fee * deal_fee_order_pct * deal_annual_orders
@@ -2745,18 +3497,55 @@ def admin_page():
                 sharepoint_cell
             ])
 
-        rate_data = {'headers': rate_headers, 'rows': rate_rows}
+        rate_data = {'headers': rate_headers, 'rows': rate_rows, 'row_ids': rate_data.get('row_ids') or []}
         rate_data['groups'] = _build_admin_groups(rate_data.get('headers') or [], 'rate')
 
     deal_data = _build_deal_sizing_view(deal_data)
     deal_data['groups'] = _build_admin_groups(deal_data.get('headers') or [], 'deal')
     wb.close()
+    return deal_data, rate_data
+
+@app.route('/admin')
+def admin_page():
+    deal_data, rate_data = _build_admin_view_data()
     return render_template('admin.html', deal_data=deal_data, rate_data=rate_data)
 
 @app.route('/admin/download')
 def admin_download():
-    _ensure_admin_log()
-    return send_file(ADMIN_LOG_PATH, as_attachment=True)
+    deal_data, rate_data = _build_admin_view_data()
+
+    def _flatten_cell(cell):
+        if isinstance(cell, dict):
+            return cell.get('label') or cell.get('href') or ''
+        return '' if cell is None else cell
+
+    wb = openpyxl.Workbook()
+    default_sheet = wb.active
+    wb.remove(default_sheet)
+
+    deal_ws = wb.create_sheet('Deal sizing')
+    deal_ws.append(deal_data.get('headers') or [])
+    for row in deal_data.get('rows') or []:
+        deal_ws.append([_flatten_cell(cell) for cell in row])
+
+    rate_ws = wb.create_sheet('Rate card + deal sizing')
+    rate_ws.append(rate_data.get('headers') or [])
+    for row in rate_data.get('rows') or []:
+        rate_ws.append([_flatten_cell(cell) for cell in row])
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+        temp_path = tmp.name
+    wb.save(temp_path)
+
+    @after_this_request
+    def _cleanup(response):
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        return response
+
+    return send_file(temp_path, as_attachment=True, download_name='admin_log.xlsx')
 
 @app.route('/api/admin/clear', methods=['POST'])
 def admin_clear():
@@ -2771,6 +3560,32 @@ def admin_clear():
     ws = wb[sheet_name]
     if ws.max_row and ws.max_row > 1:
         ws.delete_rows(2, ws.max_row)
+    wb.save(ADMIN_LOG_PATH)
+    wb.close()
+    return jsonify({'success': True})
+
+@app.route('/api/admin/delete', methods=['POST'])
+def admin_delete_row():
+    payload = request.get_json(silent=True) or {}
+    sheet_key = (payload.get('sheet') or '').strip().lower()
+    row_id = payload.get('row_id')
+    sheet_name = 'Deal sizing' if sheet_key == 'deal' else 'Rate card + deal sizing'
+    try:
+        row_id = int(row_id)
+    except Exception:
+        return jsonify({'error': 'Invalid row'}), 400
+    if row_id < 2:
+        return jsonify({'error': 'Invalid row'}), 400
+    _ensure_admin_log()
+    wb = openpyxl.load_workbook(ADMIN_LOG_PATH)
+    if sheet_name not in wb.sheetnames:
+        wb.close()
+        return jsonify({'error': 'Sheet not found'}), 404
+    ws = wb[sheet_name]
+    if row_id > ws.max_row:
+        wb.close()
+        return jsonify({'error': 'Row not found'}), 404
+    ws.delete_rows(row_id, 1)
     wb.save(ADMIN_LOG_PATH)
     wb.close()
     return jsonify({'success': True})
@@ -3189,6 +4004,8 @@ def mapping():
         # Normalize and save CSV
         raw_csv_path = job_dir / 'raw_invoice.csv'
         df = pd.read_csv(raw_csv_path)
+        for col in df.select_dtypes(include=['category']).columns:
+            df[col] = df[col].astype(object)
         
         # Find zone column name for later use
         zone_col_name = None
@@ -3231,6 +4048,8 @@ def mapping():
         
         # Create normalized DataFrame
         normalized_df = pd.DataFrame(normalized_data)
+        for col in normalized_df.select_dtypes(include=['category']).columns:
+            normalized_df[col] = normalized_df[col].astype(object)
 
         # Derived/computed fields
         country_series = None
@@ -3268,6 +4087,22 @@ def mapping():
         calculated_code = calculated_code.mask(calculated_code.eq(""), np.where(has_zip, "US", ""))
         normalized_df['CALCULATED_TWO_LETTER_COUNTRY_CODE'] = calculated_code
 
+        if structure == 'zip' and 'Zip' in normalized_df.columns:
+            origin_zip3 = _zip3_from_zip(origin_zip)
+            zone_map = _fetch_usps_zone_chart(origin_zip3)
+            if zone_map:
+                dest_zip3 = normalized_df['Zip'].apply(_zip3_from_zip)
+                zone_values = dest_zip3.map(zone_map)
+                normalized_df['Zone'] = pd.to_numeric(zone_values, errors='coerce')
+            else:
+                return jsonify({
+                    'error': (
+                        'Unable to fetch USPS zone chart for origin ZIP. '
+                        'Check network access or prefill the cache at '
+                        f'{USPS_ZONE_CACHE_PATH}.'
+                    )
+                }), 500
+
         shipping_service_series = (
             normalized_df['Shipping Service']
             if 'Shipping Service' in normalized_df.columns
@@ -3301,7 +4136,7 @@ def mapping():
             normalized_df['WEIGHT_IN_LBS'] = (weight_series / 16).round(4)
         elif weight_unit == 'lb':
             normalized_df['WEIGHT_IN_LBS'] = weight_series.round(4)
-            normalized_df['WEIGHT_IN_OZ'] = (weight_series * 16).round(4)
+            normalized_df['WEIGHT_IN_OZ'] = pd.Series([None] * len(normalized_df))
         elif weight_unit == 'kg':
             normalized_df['WEIGHT_IN_LBS'] = (weight_series * 2.2046226218).round(4)
             normalized_df['WEIGHT_IN_OZ'] = (weight_series * 35.27396195).round(4)
@@ -3322,13 +4157,19 @@ def mapping():
 
         size_bins = [-float('inf'), SMALL_MAX_VOLUME, MEDIUM_MAX_VOLUME, float('inf')]
         size_labels = ['SMALL', 'MEDIUM', 'LARGE']
-        size_class = pd.cut(volume, bins=size_bins, labels=size_labels, right=False)
+        size_class = pd.Series(
+            pd.cut(volume, bins=size_bins, labels=size_labels, right=False),
+            index=volume.index
+        ).astype(object)
         normalized_df['PACKAGE_SIZE_STATUS'] = size_class.where(volume.notna(), "")
 
         weight_lbs = normalized_df['WEIGHT_IN_LBS']
         weight_bins = [-float('inf'), 1, 5, 10, float('inf')]
         weight_labels = ['<1', '1-5', '5-10', '10+']
-        weight_class = pd.cut(weight_lbs, bins=weight_bins, labels=weight_labels, right=False)
+        weight_class = pd.Series(
+            pd.cut(weight_lbs, bins=weight_bins, labels=weight_labels, right=False),
+            index=weight_lbs.index
+        ).astype(object)
         normalized_df['WEIGHT_CLASSIFICATION'] = weight_class.where(weight_lbs.notna(), "")
 
         origin_zip_value = extract_origin_zip(origin_zip)
@@ -3477,6 +4318,32 @@ def merchant_pricing(job_id):
         included_services = saved.get('included_services', [])
         if not has_saved and not included_services:
             included_services = default_included_services(available_services)
+        else:
+            available_by_norm = {normalize_service_name(s): s for s in available_services}
+            saved_norm = {normalize_service_name(s) for s in (included_services or [])}
+            default_norm = {
+                normalize_service_name(s)
+                for s in default_included_services(available_services)
+            }
+            merged = []
+            for norm in saved_norm:
+                if norm in available_by_norm:
+                    merged.append(available_by_norm[norm])
+            added = False
+            for service in available_services:
+                norm = normalize_service_name(service)
+                if norm not in saved_norm and norm in default_norm:
+                    merged.append(service)
+                    added = True
+            if merged:
+                included_services = merged
+            if added and pricing_file.exists():
+                payload = {
+                    'excluded_carriers': excluded,
+                    'included_services': included_services
+                }
+                with open(pricing_file, 'w') as f:
+                    json.dump(payload, f)
 
         eligibility = compute_eligibility(
             mapping_config.get('origin_zip'),
@@ -3639,9 +4506,27 @@ def generate():
                         if eligibility['uniuni_eligible_final']:
                             redo_selected.append('UniUni')
                     selected_set = _dashboard_selected_from_redo(redo_selected)
-                    selected_dashboard = [c for c in DASHBOARD_CARRIERS if c in selected_set]
+                    available_carriers = list(DASHBOARD_CARRIERS)
+                    eligibility = compute_eligibility(
+                        mapping_config.get('origin_zip'),
+                        mapping_config.get('annual_orders'),
+                        mapping_config=mapping_config
+                    )
+                    if eligibility and not eligibility['amazon_eligible_final']:
+                        available_carriers = [c for c in available_carriers if c != 'Amazon']
+                    if eligibility and not eligibility['uniuni_eligible_final']:
+                        available_carriers = [c for c in available_carriers if c != 'UniUni']
+                    selected_dashboard = [c for c in available_carriers if c in selected_set]
                     if selected_dashboard:
                         _start_summary_cache(job_dir, source_mtime, selected_dashboard)
+                        selection_key = _selection_cache_key(selected_dashboard)
+                        _start_breakdown_cache(
+                            job_dir,
+                            source_mtime,
+                            selected_dashboard,
+                            selection_key,
+                            available_carriers
+                        )
             except Exception as e:
                 write_error(job_dir, f'Generation failed: {str(e)}')
 
@@ -4151,21 +5036,19 @@ def dashboard_data(job_id):
         include_per_carrier = request.args.get('per_carrier') == '1'
         if request.method == 'GET' and include_per_carrier:
             selection_key = _selection_cache_key(selected_dashboard)
-            selections = {carrier: [carrier] for carrier in available_carriers}
-            metrics_map = _calculate_metrics_batch(job_dir, selections)
-            per_carrier = [
-                {'carrier': carrier, 'metrics': metrics_map.get(carrier, {})}
-                for carrier in available_carriers
-            ]
-            overall_metrics = _calculate_metrics(job_dir, selected_dashboard)
-            _write_summary_cache(job_dir, source_mtime, selection_key, overall_metrics)
-            summary_pending = False
+            carriers_for_breakdown = selected_dashboard or available_carriers
+            cache = _read_dashboard_cache(rate_card_files[0])
+            per_carrier = []
             pending = False
+            for carrier in carriers_for_breakdown:
+                cache_key = f"carrier:{carrier}"
+                metrics = cache.get(cache_key)
+                if metrics is None:
+                    metrics = _calculate_metrics_from_formulas(rate_card_files[0], [carrier])
+                    _write_dashboard_cache_entry(rate_card_files[0], cache_key, metrics)
+                per_carrier.append({'carrier': carrier, 'metrics': metrics})
             per_carrier_count = len(per_carrier)
             if annual_orders_missing:
-                overall_metrics = {**overall_metrics}
-                for key in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available'):
-                    overall_metrics.pop(key, None)
                 for entry in per_carrier:
                     metrics = entry.get('metrics') or {}
                     for key in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available'):
@@ -4174,26 +5057,25 @@ def dashboard_data(job_id):
             return jsonify({
                 'selected_carriers': selected_dashboard,
                 'available_carriers': available_carriers,
-                'overall': overall_metrics,
                 'per_carrier': per_carrier,
-                'pending': False,
-                'summary_pending': summary_pending,
+                'pending': pending,
+                'summary_pending': False,
                 'per_carrier_count': per_carrier_count,
                 'annual_orders_missing': annual_orders_missing,
                 'show_usps_market_discount': show_usps_market_discount,
                 'usps_market_pct_off': pct_off,
                 'usps_market_dollar_off': dollar_off,
                 'carrier_percentages': carrier_percentages,
-                'per_carrier_total': len(available_carriers)
+                'per_carrier_total': len(carriers_for_breakdown)
             })
 
-        if refresh:
-            overall_metrics = _calculate_metrics(job_dir, selected_dashboard)
-            summary_pending = False
-        else:
-            overall_metrics, summary_pending = _start_summary_cache(job_dir, source_mtime, selected_dashboard)
-        if overall_metrics is None and not summary_pending:
-            overall_metrics = {}
+        selection_key = _selection_cache_key(selected_dashboard)
+        cache = _read_dashboard_cache(rate_card_files[0])
+        overall_metrics = cache.get(f"selection:{selection_key}")
+        summary_pending = False
+        if overall_metrics is None:
+            overall_metrics = _calculate_metrics_from_formulas(rate_card_files[0], selected_dashboard)
+            _write_dashboard_cache_entry(rate_card_files[0], f"selection:{selection_key}", overall_metrics)
         if annual_orders_missing:
             overall_metrics = {**(overall_metrics or {})}
             for key in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available'):

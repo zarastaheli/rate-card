@@ -47,8 +47,10 @@
           <p class="subtitle">Overview and carrier breakdown based on your selections</p>
         </div>
         <div class="dashboard-actions">
-          <button class="button button-primary button-no-shadow" type="button" id="download-btn">Download Rate Card</button>
-          <button class="button button-secondary" type="button" id="sharepoint-btn">View File In Sharepoint</button>
+          <div class="dashboard-actions-stack">
+            <button class="button button-primary button-no-shadow" type="button" id="download-btn">Download Rate Card</button>
+            <button class="button button-secondary" type="button" id="sharepoint-btn">View File In Sharepoint</button>
+          </div>
         </div>
       </div>
 
@@ -385,11 +387,13 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script>
     const jobId = '{{ job_id }}';
     const merchantName = '{{ merchant_name }}';
     const downloadBtn = document.getElementById('download-btn');
     const sharepointBtn = document.getElementById('sharepoint-btn');
+    const saveDashboardBtn = document.getElementById('save-dashboard-btn');
     const backToRedoBtn = document.getElementById('back-to-redo-btn');
     const startOverBtn = document.getElementById('start-over-btn');
     const annualOrdersBanner = document.getElementById('annual-orders-banner');
@@ -428,6 +432,42 @@
     const dealSizeStorageKey = `deal_size_value_${jobId}`;
     const dealInputsStorageKey = `deal_inputs_${jobId}`;
     const dealCarrierSpreadLoading = document.getElementById('deal-carrier-spread-loading');
+
+    function _sanitizeFilename(value) {
+      return String(value || 'Merchant')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .replace(/[^a-zA-Z0-9 _-]/g, '')
+        .replace(/\s/g, ' ');
+    }
+
+    function _downloadCanvas(canvas, filename) {
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    if (saveDashboardBtn) {
+      saveDashboardBtn.addEventListener('click', async () => {
+        if (typeof html2canvas !== 'function') {
+          alert('Screenshot tool unavailable. Please try again.');
+          return;
+        }
+        const target = document.querySelector('.card.card--tall') || document.body;
+        try {
+          const canvas = await html2canvas(target, {
+            backgroundColor: '#ffffff',
+            scale: window.devicePixelRatio || 1
+          });
+          const safeName = _sanitizeFilename(merchantName) || 'Merchant';
+          _downloadCanvas(canvas, `${safeName} dashboard.png`);
+        } catch (err) {
+          console.error('Dashboard capture failed:', err);
+          alert('Unable to capture dashboard. Please try again.');
+        }
+      });
+    }
     const SHOW_CALC_HINTS = false;
 
     if (SHOW_CALC_HINTS) {
@@ -503,6 +543,7 @@
     let dealSpreadPerOrder = 0;
     let dealCarrierDetails = [];
     let dealCarrierDetailsPending = false;
+    let lastPerCarrier = [];
 
     function formatMetric(label, value) {
       if (annualOrdersMissing && suppressedMetrics.has(label)) return '--';
@@ -658,6 +699,7 @@
     function renderBreakdown(perCarrier) {
       const container = document.getElementById('carrier-breakdown');
       container.innerHTML = '';
+      lastPerCarrier = perCarrier || [];
       const columns = [
         { key: 'Est. Merchant Annual Savings', label: 'Est. Merchant Annual Savings' },
         { key: 'Est. Redo Deal Size', label: 'Est. Redo Deal Size' },
@@ -672,10 +714,43 @@
         '% Orders We Could Win': 'Rate card: Pricing & Summary!C11 computed with only this carrier enabled.',
         '% Orders Won W/ Spread': 'Rate card: Pricing & Summary!C12 computed with only this carrier enabled.'
       };
+      const storedInputs = getStoredDealInputs();
+      const useDealInputs = hasUsableDealInputs(storedInputs);
+      const computedDealSizes = {};
+      if (useDealInputs && storedInputs) {
+        const annualOrders = parseNumberValue(storedInputs.annualOrders);
+        const avgLabelCost = parseNumberValue(storedInputs.avgLabelCost);
+        const attachRate = parseNumberValue(storedInputs.attachRate);
+        const perLabelFee = parseNumberValue(storedInputs.perLabelFee);
+        const feeOrderPct = parseNumberValue(storedInputs.feeOrderPct);
+        const saasFee = parseNumberValue(storedInputs.saasFee);
+        lastPerCarrier.forEach((row) => {
+          if (!row || !row.carrier) return;
+          const spreadTotals = computeDealSpreadTotalsFromValues({
+            annualOrders: Number.isFinite(annualOrders) ? annualOrders : 0,
+            avgLabelCost: Number.isFinite(avgLabelCost) ? avgLabelCost : 0,
+            commentSold: !!storedInputs.commentSold,
+            ebay: !!storedInputs.ebay,
+            liveSelling: !!storedInputs.liveSelling,
+            attachRate: Number.isFinite(attachRate) ? attachRate : 0,
+            selectedCarriers: [row.carrier],
+            carrierDetails: dealCarrierDetails
+          });
+          const labelFeeTotal = (Number.isFinite(perLabelFee) ? perLabelFee : 0)
+            * ((Number.isFinite(feeOrderPct) ? feeOrderPct : 0) * (Number.isFinite(annualOrders) ? annualOrders : 0));
+          const dealSize = spreadTotals.totalSpread + (Number.isFinite(saasFee) ? saasFee : 0) + labelFeeTotal;
+          computedDealSizes[row.carrier] = Number.isFinite(dealSize) ? dealSize : null;
+        });
+      }
       const maxValues = {};
       columns.forEach(({ key }) => {
         const values = perCarrier
-          .map(row => parseMetricValue((row.metrics || {})[key]))
+          .map(row => {
+            if (key === 'Est. Redo Deal Size' && computedDealSizes[row.carrier] !== undefined) {
+              return computedDealSizes[row.carrier];
+            }
+            return parseMetricValue((row.metrics || {})[key]);
+          })
           .filter(val => val !== null);
         maxValues[key] = values.length ? Math.max(...values) : null;
       });
@@ -689,8 +764,13 @@
           if (annualOrdersMissing && suppressedMetrics.has(key)) {
             return '--';
           }
-          const raw = metrics[key];
-          const formatted = formatMetric(key, raw);
+          let raw = metrics[key];
+          if (key === 'Est. Redo Deal Size' && computedDealSizes[row.carrier] !== undefined) {
+            raw = computedDealSizes[row.carrier];
+          }
+          const formatted = key === 'Est. Redo Deal Size' && raw !== null && raw !== undefined
+            ? formatCurrency(raw)
+            : formatMetric(key, raw);
           const numeric = parseMetricValue(raw);
           const max = maxValues[key];
           const hint = breakdownHints[key] || '';
@@ -1104,6 +1184,9 @@
       if (carrierSpreadEl) {
         carrierSpreadEl.textContent = formatCurrency(spreadTotals.totalSpread || 0);
       }
+      if (lastPerCarrier.length) {
+        renderBreakdown(lastPerCarrier);
+      }
     }
 
     async function refreshDealSizeFromStoredInputs() {
@@ -1144,6 +1227,9 @@
       localStorage.setItem(dealSizeStorageKey, String(Number.isFinite(dealSize) ? dealSize : 0));
       if (dealSizingCard) {
         dealSizingCard.classList.add('has-deal-size');
+      }
+      if (lastPerCarrier.length) {
+        renderBreakdown(lastPerCarrier);
       }
     }
 

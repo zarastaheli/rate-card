@@ -1,0 +1,57 @@
+import pandas as pd
+import requests
+import re
+from datetime import datetime
+
+
+def get_zip_code_zones(zip_code_prefix: str) -> dict:
+    base_url = "https://postcalc.usps.com/DomesticZoneChart/GetZoneChart"
+    headers = {
+    'accept': 'application/json, text/javascript, */*; q=0.01',
+    'accept-language': 'en-US,en;q=0.9',
+    # 'cookie': '_ga_14P3HY1MQZ=GS1.1.1742329297.1.0.1742329298.0.0.0; _ga_4WMWRRBML7=GS1.1.1745266497.2.0.1745266497.0.0.0; _dpm_id.340b=94e8a3ba-4205-49c3-968e-c9a55162a9cd.1754084796.1.1754084796.1754084796.b4c8c692-0f4f-4308-8e45-e9f130d430c6; _ga_QM3XHZ2B95=GS2.1.s1754084795$o5$g0$t1754084803$j52$l0$h0; _ga_7TB0KSCYX9=GS2.1.s1754329956$o15$g1$t1754329975$j41$l0$h0; _ga=GA1.1.540312786.1741224081; _ga_CSLL4ZEK4L=GS2.1.s1755722456$o35$g0$t1755722456$j60$l0$h0; TLTSID=b91e0313b4241685820e00e0ed96ae55; amlbcookie=01; EntRegName=Kash||Johnson; reg-entreg=ffffffff3b22209145525d5f4f58455e445a4a4212d3; dfdc00f11bc995e=Jkfihv80Rn9Dz7-MVuUofJxZTyU.*AAJTSQACMDIAAlNLABxtZTNLUnRLbXdUSlFGZmdJS1g2UE82RFdYV1k9AAR0eXBlAANDVFMAAlMxAAIwMQ..*; o59a9A4Gx=A6UKB1GaAQAA9NWW7TYTk-kPeH9rIkCX2htWrqLep6znf33Z7snY-3eUEfDsAULb9paucl6ZwH9eCOfvosJeCA|1|1|209aed1b3e0f207fb3c9c1e0895c55bb1362e9b4; NSC_qptudbmdofx-mc=7ce2a3d99efbb6096bc3d1ddb6fe0c75b8e0ddb36fb70b1714c865c5b51d0c16a2f07589; ak_bmsc=D04B54AA50F3A598E1DD7F20410BB755~000000000000000000000000000000~YAAQyffVF7MsrNSbAQAAySuF1x7EwcyTjbHg3UErEedh5Qq3hgABYDyb1mIU5/UEXjUtwiLQyf2P8PqO3MtKgnNtP82wiIHxABo5U9sahcFL8rXRZQ+IuvLLiRUFkYAt1i7m5lmjN8mTdJJsV74DLMtH/xt03UnBEvJe2fkdHRWfpm8Oi+FTLZmico6i1JxmT9+PQGdJ/B4yqUPB9KzI6wmnGxrhNi2S9YFSxAl4TAYcDQ9aqbzethkgmbNE//6jWye3djss9dU+ju+Ud9eIsAy888IQYbh2QFnA7S9oJe3F47fS9Z/WCOeEqCwr6J+PomwwaC39tQV6iqWrtLPtwIFfUTfshmPzzUMmMH4r1piH09O/MX/O7nqxDgTM67sb/Cc2HfudzIofDA==; NSC_qptudbmdofxfb-mc=ffffffff3b46163045525d5f4f58455e445a4a421548; _abck=AA8CAF92AFBC0446E46312920A4E33DE~0~YAAQyffVF08trNSbAQAAcS2F1w9By8h7u8eZR1MKGcuCY6Laek5DxtxW2adfaz3l5fIsW8MqvDuRnX4QG6iHR2BTDpynGHNTTttIJok4ox//vPQpb87Wn6RZWSG5P+TpJAvKvEYBXY/ZTJN8lFN/7zut617I15x5zhv8B9e+xyFAF03HE9uInrSPhnmQAxK49DioUbig06clIBd883q9KPFFH9e0ZHfk0yH3NFXTLiOVGUpHlO/15CQltlUN7bf+mosvQSF2Xt1XzSKb70DhRyNMx/VEz9s+lkVzWov6W/DksqRyv5AyFuWftgFVr34ARq0cIM4iZqUT8vjNvkfTv6fOz44LS8CL4x/rOuZbFHT+kwLgewmPES/aPVqimUekyzDnI6cOD7yjWr5BoBMIynY2SWv7F/Bz+CmQg1I/PgOSNtc19qgLdgA/XR1yZDttrbByaHZje952SDOtI70d9eTqWXRdlnytjTtb7/WLIqiap9JgYU29fDNgW1V5KRXkoLdrT5Qjym34puHPH9N9B8EcLt3uSZW8fOOmXkL6SPwoTjXlSouVuVL5PWitX3OJS7CpmsP6XGojhoFthyY5TVJ8WdphdJTannO/dLHCVTgyrrM5vR7FhlBoeBC/pUE5ZdTnaq5j4oIM+8guLoqCZnFRmhlj0Y01WczFgOHZxJtdcVPoYTgDzo9qXKAyA5ZW009HCEuh7P4B+wNgYfmMgbF1fOakW/3/MoDH2RTWh6m0cgj8BogxIHg0e1eh+Z3RpoSyTeZowEnqI2Dk~-1~-1~-1~AAQAAAAF%2f%2f%2f%2f%2f9ATCq52BGiafmMzbh49UuHFJUopP2PVyrmAbB+8wgl0NfrMrUb5bKgzQfVtLgHcHJTFOkzHIo5PUwJkRtyC08aHzJ0ngVliJ3OxCo4NZnJc1uDJf49R79lknqrOriyv0Ln74nk%3d~-1; bm_sv=82E87AABC760C59F9E04D4A55162199D~YAAQyffVF5BXrNSbAQAAaN2F1x5omeQYpDn2pO5tEfVs97wzs8T4Ul0YsfoOmbFgM7kWfm5TL6UuxnxFOOlzZWuxjNRCwL4qq/MRvUUeXxor7SjzazZh1F8sWRQbl+4fT0z612EOUPH5m/+C+2ArXIe5ROh2MGpSGykudjFy8LrpT1OeOuxKjbkI83ZOOeRJ1K7sL1OADeGGiGBlVojiiBPl03cMFuxvQXTKw4cyHC4Hc8i1ATaKvT5SysNphg==~1; bm_sz=7AF1C4BE3EFD9110505BE50F5C8CF2A9~YAAQyffVF5FXrNSbAQAAaN2F1x4KQR6yiIhTHr4E6+jN7pUzS6YiFQYs/DykC+QYa1NQPF40TqHFCQY0c2QJBBvv/QOFLyUyzoVs1TYImZVWnlg+7eRT+Nh+zRnk0y+WrX1VYOUUf0/ZJwYS4SE9fJ6AI+SGYyKJpFBcsggbT983tbKfBD8Wi9Mb593grEpdwB7+GNJLSU4w2JNT1hhyexeayIPelukrCiVNNBVZFu1m8A79u7Vsr8go5ECVc701zfFuUC7yvH7d7vKJYry3MSBNiZGOyrYOecDL1RXFIiN5WP4snM+xM30LP39+fpctFP/g7m8TSTGZdylEodhMfJ8spnyxofcl5G8U7x3DPgkAjEu7C95QBTZpXpNJ8p1oo7OVImxxeL23xtYvL5tBOGBszRHV~4536633~3294259; ADRUM_BTa=R:43|g:848c4fd8-8acd-4f23-887d-ddc23a9946cf|n:customer1_c94569eb-be75-421e-99c6-a91f34c7994a',
+    'priority': 'u=1, i',
+    'referer': 'https://postcalc.usps.com/domesticzonechart',
+    'sec-ch-ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"macOS"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-origin',
+    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+    'x-requested-with': 'XMLHttpRequest'
+    }
+
+    def _request_for_date(shipping_date: str) -> dict:
+        params = {
+            'zipCode3Digit': zip_code_prefix,
+            'shippingDate': shipping_date
+        }
+        response = requests.get(base_url, headers=headers, params=params, timeout=30)
+        response.raise_for_status()
+        return response.json()
+
+    shipping_date = datetime.now().strftime('%m/%d/%Y')
+    data = _request_for_date(shipping_date)
+    error = str(data.get('ShippingDateError') or '')
+    if error:
+        match = re.search(r'between (\\d{2}/\\d{2}/\\d{4}) and (\\d{2}/\\d{2}/\\d{4})', error)
+        if match:
+            data = _request_for_date(match.group(1))
+    return data
+
+
+df_list = []
+
+for i in range(5, 1000):
+    zip_code_prefix = ('00' + str(i))[-3:]
+    print(zip_code_prefix)
+    result = get_zip_code_zones(zip_code_prefix)
+    for i in range(0, 4):
+        df = pd.DataFrame(result[f'Column{i}'])
+        df['ZipCodePrefix'] = zip_code_prefix
+        df_list.append(df)
+
+final_df = pd.concat(df_list)
+
+final_df.to_csv('zip_code_zones_new.csv', index=False)
