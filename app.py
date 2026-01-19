@@ -4947,8 +4947,8 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     # Pre-compute dashboard metrics and save to JSON cache (fast, no Excel re-load needed)
     try:
         _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
-    except Exception:
-        pass  # Don't fail rate card generation if pre-computation fails
+    except Exception as e:
+        logging.warning(f"Dashboard metrics pre-computation failed: {e}")
     
     try:
         log_admin_entry(job_dir.name, mapping_config, merchant_pricing, redo_config)
