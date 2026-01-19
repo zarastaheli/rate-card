@@ -2082,6 +2082,26 @@ def _dashboard_cache_sheet_name():
 def _dashboard_cache_version():
     return 2
 
+def _fast_cache_path(job_dir):
+    return Path(job_dir) / 'dashboard_metrics_cache.json'
+
+def _read_dashboard_cache_fast(job_dir):
+    cache_path = _fast_cache_path(job_dir)
+    if not cache_path.exists():
+        return {}
+    try:
+        with open(cache_path, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _write_dashboard_cache_fast(job_dir, key, metrics):
+    cache_path = _fast_cache_path(job_dir)
+    cache = _read_dashboard_cache_fast(job_dir)
+    cache[key] = metrics
+    with open(cache_path, 'w') as f:
+        json.dump(cache, f)
+
 def _read_dashboard_cache(rate_card_path):
     if not rate_card_path or not Path(rate_card_path).exists():
         return {}
@@ -4976,12 +4996,15 @@ def dashboard_data(job_id):
             summary_cache = _summary_cache_path(job_dir)
             breakdown_cache = _cache_path_for_job(job_dir)
             carrier_details_cache = _carrier_details_cache_path(job_dir)
+            fast_cache = _fast_cache_path(job_dir)
             if summary_cache.exists():
                 summary_cache.unlink()
             if breakdown_cache.exists():
                 breakdown_cache.unlink()
             if carrier_details_cache.exists():
                 carrier_details_cache.unlink()
+            if fast_cache.exists():
+                fast_cache.unlink()
             job_prefix = f"{job_dir.name}:"
             with summary_jobs_lock:
                 for key in list(summary_jobs.keys()):
@@ -5037,7 +5060,7 @@ def dashboard_data(job_id):
         if request.method == 'GET' and include_per_carrier:
             selection_key = _selection_cache_key(selected_dashboard)
             carriers_for_breakdown = selected_dashboard or available_carriers
-            cache = _read_dashboard_cache(rate_card_files[0])
+            cache = _read_dashboard_cache_fast(job_dir)
             per_carrier = []
             pending = False
             for carrier in carriers_for_breakdown:
@@ -5045,7 +5068,7 @@ def dashboard_data(job_id):
                 metrics = cache.get(cache_key)
                 if metrics is None:
                     metrics = _calculate_metrics_from_formulas(rate_card_files[0], [carrier])
-                    _write_dashboard_cache_entry(rate_card_files[0], cache_key, metrics)
+                    _write_dashboard_cache_fast(job_dir, cache_key, metrics)
                 per_carrier.append({'carrier': carrier, 'metrics': metrics})
             per_carrier_count = len(per_carrier)
             if annual_orders_missing:
@@ -5070,12 +5093,12 @@ def dashboard_data(job_id):
             })
 
         selection_key = _selection_cache_key(selected_dashboard)
-        cache = _read_dashboard_cache(rate_card_files[0])
+        cache = _read_dashboard_cache_fast(job_dir)
         overall_metrics = cache.get(f"selection:{selection_key}")
         summary_pending = False
         if overall_metrics is None:
             overall_metrics = _calculate_metrics_from_formulas(rate_card_files[0], selected_dashboard)
-            _write_dashboard_cache_entry(rate_card_files[0], f"selection:{selection_key}", overall_metrics)
+            _write_dashboard_cache_fast(job_dir, f"selection:{selection_key}", overall_metrics)
         if annual_orders_missing:
             overall_metrics = {**(overall_metrics or {})}
             for key in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available'):
