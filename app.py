@@ -4540,48 +4540,6 @@ def generate():
         def run_generation():
             try:
                 generate_rate_card(job_dir, mapping_config, merchant_pricing)
-                rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
-                if rate_card_files:
-                    source_mtime = int(rate_card_files[0].stat().st_mtime)
-                    redo_selected = []
-                    redo_file = job_dir / 'redo_carriers.json'
-                    if redo_file.exists():
-                        with open(redo_file, 'r') as f:
-                            redo_config = json.load(f)
-                            redo_selected = redo_config.get('selected_carriers', [])
-                    else:
-                        redo_selected = list(REDO_FORCED_ON)
-                        eligibility = compute_eligibility(
-                            mapping_config.get('origin_zip'),
-                            mapping_config.get('annual_orders'),
-                            mapping_config=mapping_config
-                        )
-                        if eligibility['amazon_eligible_final']:
-                            redo_selected.append('Amazon')
-                        if eligibility['uniuni_eligible_final']:
-                            redo_selected.append('UniUni')
-                    selected_set = _dashboard_selected_from_redo(redo_selected)
-                    available_carriers = list(DASHBOARD_CARRIERS)
-                    eligibility = compute_eligibility(
-                        mapping_config.get('origin_zip'),
-                        mapping_config.get('annual_orders'),
-                        mapping_config=mapping_config
-                    )
-                    if eligibility and not eligibility['amazon_eligible_final']:
-                        available_carriers = [c for c in available_carriers if c != 'Amazon']
-                    if eligibility and not eligibility['uniuni_eligible_final']:
-                        available_carriers = [c for c in available_carriers if c != 'UniUni']
-                    selected_dashboard = [c for c in available_carriers if c in selected_set]
-                    if selected_dashboard:
-                        _start_summary_cache(job_dir, source_mtime, selected_dashboard)
-                        selection_key = _selection_cache_key(selected_dashboard)
-                        _start_breakdown_cache(
-                            job_dir,
-                            source_mtime,
-                            selected_dashboard,
-                            selection_key,
-                            available_carriers
-                        )
             except Exception as e:
                 write_error(job_dir, f'Generation failed: {str(e)}')
 
