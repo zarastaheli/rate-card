@@ -5301,4 +5301,4 @@ def download_normalized(job_id):
     return send_file(normalized_csv, as_attachment=True, download_name='normalized.csv')
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000, threaded=True, use_reloader=False)
+    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)
