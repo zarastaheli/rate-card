@@ -5204,7 +5204,12 @@ def dashboard_data(job_id):
         carrier_percentages = _carrier_distribution(job_dir, mapping_config, available_carriers)
         
         cache = _read_dashboard_cache(job_dir)
-        cache_valid = cache.get('ready') and cache.get('source_hash') == current_hash
+        # Only check rate card file hash (first part) for cache validity
+        # Config hash can change but rate card content is what matters
+        cached_hash = cache.get('source_hash', '')
+        cached_file_hash = cached_hash.split(':')[0] if cached_hash else ''
+        current_file_hash = current_hash.split(':')[0] if current_hash else ''
+        cache_valid = cache.get('ready') and cached_file_hash == current_file_hash
         
         if not cache_valid:
             bg_status = _get_background_cache_status(job_dir)
