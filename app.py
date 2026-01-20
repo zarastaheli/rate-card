@@ -6086,6 +6086,17 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     wb.calculation.forceFullCalc = True  # Forces complete recalculation rebuild
     wb.calculation.calcOnSave = False    # Don't try to calculate on save (openpyxl can't)
     
+    # Clean up corrupted tables (strings instead of Table objects) before saving
+    from openpyxl.worksheet.table import Table
+    for ws in wb.worksheets:
+        corrupted_tables = [name for name, tbl in ws.tables.items() if not isinstance(tbl, Table)]
+        for table_name in corrupted_tables:
+            try:
+                del ws.tables[table_name]
+                logging.warning(f"Removed corrupted table '{table_name}' from sheet '{ws.title}'")
+            except Exception:
+                pass
+    
     # Save the workbook atomically
     temp_file = None
     save_start = time.time()
