@@ -5496,6 +5496,16 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     if 'ORIGIN_ZIP_CODE' in header_to_col:
         write_cols.add(header_to_col['ORIGIN_ZIP_CODE'])
 
+    numeric_cols = {
+        'WEIGHT_IN_OZ',
+        'WEIGHT_IN_LBS',
+        'PACKAGE_HEIGHT',
+        'PACKAGE_WIDTH',
+        'PACKAGE_LENGTH',
+        'PACKAGE_DIMENSION_VOLUME',
+        'LABEL_COST'
+    }
+
     # Optimize: Pre-calculate lookups to avoid repeating work in loops
     formula_cols_list = sorted(list(formula_cols))
     write_fields_prepared = []
