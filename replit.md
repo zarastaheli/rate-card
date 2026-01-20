@@ -22,9 +22,10 @@ A Flask-based web application for shipping rate card analysis. The app processes
 └── runs/                     # Job artifacts (auto-created)
 ```
 
-## Running the Application
+- ## Running the Application
 - The app runs on port 5000
-- Run with: `python app.py`
+- Run with: `gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --preload --log-level info`
+- The Replit workflow launches the same command so the server runs in production-ready mode. Use `python app.py` only for quick local validation; production deployments should rely on Gunicorn.
 - Open in browser: Navigate to the preview URL
 
 ## Key Dependencies

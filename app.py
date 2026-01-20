@@ -18,6 +18,7 @@ import time
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import logging
 from flask import Flask, render_template, request, jsonify, send_file, session, after_this_request
 import pandas as pd
 import numpy as np
@@ -26,6 +27,7 @@ from openpyxl.worksheet.formula import ArrayFormula
 from openpyxl.utils.cell import range_boundaries, column_index_from_string
 from werkzeug.utils import secure_filename
 
+logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.config['UPLOAD_FOLDER'] = 'runs'
@@ -176,7 +178,8 @@ REDO_CARRIERS = [
     "UPS Ground",
     "UPS Ground Saver",
     "FedEx",
-    "Amazon"
+    "Amazon",
+    "DHL"
 ]
 
 REDO_FORCED_ON = [
@@ -185,7 +188,7 @@ REDO_FORCED_ON = [
     "UPS Ground Saver"
 ]
 MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'DHL', 'UniUni']
-DASHBOARD_CARRIERS = ['UniUni', 'USPS Market', 'UPS Ground', 'UPS Ground Saver', 'FedEx', 'Amazon']
+DASHBOARD_CARRIERS = ['UniUni', 'USPS Market', 'UPS Ground', 'UPS Ground Saver', 'FedEx', 'Amazon', 'DHL']
 FAST_DASHBOARD_METRICS = False
 WEIGHT_BUCKETS = [i / 16 for i in range(1, 16)] + list(range(1, 21))
 
@@ -276,7 +279,13 @@ UNIUNI_ZIPS = None
 def _load_amazon_zips():
     global AMAZON_ZIPS
     if AMAZON_ZIPS is not None:
-        return AMAZON_ZIPS
+        if isinstance(AMAZON_ZIPS, dict):
+            return AMAZON_ZIPS
+        if isinstance(AMAZON_ZIPS, (set, list)):
+            zip5 = set(str(z)[:5].zfill(5) for z in AMAZON_ZIPS if str(z).strip())
+            zip3 = {z[:3] for z in zip5 if len(z) >= 3}
+            AMAZON_ZIPS = {'zip5': zip5, 'zip3': zip3}
+            return AMAZON_ZIPS
     zip5 = set()
     zip3 = set()
     if AMAZON_ZIP_PATH.exists():
@@ -300,7 +309,13 @@ def _load_amazon_zips():
 def _load_uniuni_zips():
     global UNIUNI_ZIPS
     if UNIUNI_ZIPS is not None:
-        return UNIUNI_ZIPS
+        if isinstance(UNIUNI_ZIPS, dict):
+            return UNIUNI_ZIPS
+        if isinstance(UNIUNI_ZIPS, (set, list)):
+            zip5 = set(str(z)[:5].zfill(5) for z in UNIUNI_ZIPS if str(z).strip())
+            zip3 = {z[:3] for z in zip5 if len(z) >= 3}
+            UNIUNI_ZIPS = {'zip3': zip3, 'zip5': zip5}
+            return UNIUNI_ZIPS
     zip3 = set()
     zip5 = set()
     if UNIUNI_ZIP_PATH.exists():
@@ -846,6 +861,8 @@ def infer_redo_carrier(carrier_value, service_value):
         return 'FedEx'
     if 'AMAZON' in text:
         return 'Amazon'
+    if 'DHL' in text:
+        return 'DHL'
     return None
 
 def extract_invoice_services(raw_df, mapping_config):
@@ -3138,11 +3155,16 @@ def _find_pricing_section(ws, section_title):
 
 def _iter_section_rows(ws, start_row, label_col, stop_titles):
     row_idx = start_row
-    while True:
+    max_row = ws.max_row
+    while row_idx <= max_row:
         label_val = ws.cell(row_idx, label_col).value
+        if label_val is None:
+            row_idx += 1
+            continue
         normalized = normalize_redo_label(label_val)
         if not normalized:
-            break
+            row_idx += 1
+            continue
         if normalized in stop_titles:
             break
         yield row_idx, label_val
@@ -3173,12 +3195,28 @@ def update_pricing_summary_redo_carriers(ws, selected_redo_carriers):
         return
 
     stop_titles = {'MERCHANT CARRIERS', 'MERCHANT CARRIER', 'MERCHANT SERVICE LEVELS'}
+    seen = set()
+    last_row = header_row_idx
     for row_idx, label_val in _iter_section_rows(ws, header_row_idx + 1, label_col, stop_titles):
         normalized = normalize_redo_label(label_val)
         canonical = canonical_map.get(normalized)
+        if canonical:
+            seen.add(canonical)
 
         target_cell = ws.cell(row_idx, use_col)
         target_cell.value = 'Yes' if canonical in selected else 'No'
+        last_row = row_idx
+
+    # Ensure DHL row exists even if template pre-population stops before it
+    if 'DHL' not in seen:
+        insert_row = last_row + 1
+        ws.cell(insert_row, label_col, 'DHL')
+        ws.cell(insert_row, use_col, 'Yes' if 'DHL' in selected else 'No')
+        last_row = insert_row
+    if 'First Mile' not in seen:
+        insert_row = last_row + 1
+        ws.cell(insert_row, label_col, 'First Mile')
+        ws.cell(insert_row, use_col, 'Yes' if 'First Mile' in selected else 'No')
 
 def update_pricing_summary_merchant_carriers(ws, excluded_carriers):
     """Update Use in Pricing for Merchant Carriers section."""
@@ -3227,10 +3265,7 @@ def update_pricing_summary_merchant_service_levels(ws, selected_services, normal
     )
     if header_row_idx is None:
         return
-    services = _unique_cleaned_services(normalized_df)
-    if not services:
-        services = SERVICE_LEVELS
-
+    services = SERVICE_LEVELS
     row_idx = header_row_idx + 1
     for service in services:
         ws.cell(row_idx, label_col, service)
@@ -4782,6 +4817,7 @@ def mapping():
             return jsonify({'error': 'Weight unit required when Weight is mapped'}), 400
         if weight_unit and weight_unit not in {'oz', 'lb', 'kg'}:
             return jsonify({'error': 'Invalid weight unit'}), 400
+        detected_weight_unit = weight_unit
         
         # Validate required mappings
         structure = data.get('structure', 'zone')
@@ -4843,6 +4879,10 @@ def mapping():
         normalized_df = pd.DataFrame(normalized_data)
         for col in normalized_df.select_dtypes(include=['category']).columns:
             normalized_df[col] = normalized_df[col].astype(object)
+        if 'Weight (oz)' in normalized_df.columns and 'Weight' not in normalized_df.columns:
+            normalized_df['Weight'] = normalized_df['Weight (oz)']
+            if not detected_weight_unit:
+                detected_weight_unit = 'oz'
 
         # Derived/computed fields
         country_series = None
@@ -4922,20 +4962,20 @@ def mapping():
         if 'Weight' in normalized_df.columns:
             weight_series = pd.to_numeric(normalized_df['Weight'], errors='coerce')
         else:
-            weight_series = pd.Series([None] * len(normalized_df))
+            weight_series = pd.Series([np.nan] * len(normalized_df))
 
-        if weight_unit == 'oz':
+        if detected_weight_unit == 'oz':
             normalized_df['WEIGHT_IN_OZ'] = weight_series.round(4)
             normalized_df['WEIGHT_IN_LBS'] = (weight_series / 16).round(4)
-        elif weight_unit == 'lb':
+        elif detected_weight_unit == 'lb':
             normalized_df['WEIGHT_IN_LBS'] = weight_series.round(4)
-            normalized_df['WEIGHT_IN_OZ'] = pd.Series([None] * len(normalized_df))
-        elif weight_unit == 'kg':
+            normalized_df['WEIGHT_IN_OZ'] = pd.Series([np.nan] * len(normalized_df))
+        elif detected_weight_unit == 'kg':
             normalized_df['WEIGHT_IN_LBS'] = (weight_series * 2.2046226218).round(4)
             normalized_df['WEIGHT_IN_OZ'] = (weight_series * 35.27396195).round(4)
         else:
-            normalized_df['WEIGHT_IN_LBS'] = pd.Series([None] * len(normalized_df))
-            normalized_df['WEIGHT_IN_OZ'] = pd.Series([None] * len(normalized_df))
+            normalized_df['WEIGHT_IN_LBS'] = pd.Series([np.nan] * len(normalized_df))
+            normalized_df['WEIGHT_IN_OZ'] = pd.Series([np.nan] * len(normalized_df))
 
         def _numeric_series(series_name):
             if series_name in normalized_df.columns:
@@ -4966,7 +5006,10 @@ def mapping():
         normalized_df['WEIGHT_CLASSIFICATION'] = weight_class.where(weight_lbs.notna(), "")
 
         origin_zip_value = extract_origin_zip(origin_zip)
-        normalized_df['ORIGIN_ZIP_CODE'] = [origin_zip_value] * len(normalized_df)
+        if structure == 'zip':
+            normalized_df['ORIGIN_ZIP_CODE'] = [origin_zip_value] * len(normalized_df)
+        else:
+            normalized_df['ORIGIN_ZIP_CODE'] = ["" for _ in range(len(normalized_df))]
         
         # Save normalized CSV
         normalized_csv_path = job_dir / 'normalized.csv'
@@ -4974,6 +5017,7 @@ def mapping():
         
         return jsonify({'success': True})
     except Exception as e:
+        app.logger.exception('Error saving mapping config')
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/service-levels', methods=['POST'])
@@ -5194,7 +5238,15 @@ def redo_carriers(job_id):
                 json.dump({'selected_carriers': selected}, f)
             return jsonify({'success': True})
 
-        available = list(REDO_CARRIERS)
+        raw_df = pd.read_csv(job_dir / 'raw_invoice.csv')
+        detected_redo = detect_redo_carriers(raw_df, mapping_config)
+        available = list(REDO_FORCED_ON)
+        for carrier in detected_redo:
+            if carrier not in available:
+                available.append(carrier)
+        for fallback in ('FedEx',):
+            if fallback not in available:
+                available.append(fallback)
         selected = list(REDO_FORCED_ON)
         if eligibility['amazon_eligible_final'] and 'Amazon' not in selected:
             selected.append('Amazon')
@@ -5218,11 +5270,6 @@ def redo_carriers(job_id):
             selected = [c for c in selected if c != 'Amazon']
         if not eligibility['uniuni_eligible_final']:
             selected = [c for c in selected if c != 'UniUni']
-        if not eligibility['amazon_eligible_final']:
-            available = [c for c in available if c != 'Amazon']
-        if not eligibility['uniuni_eligible_final']:
-            available = [c for c in available if c != 'UniUni']
-
         return jsonify({
             'detected_carriers': available,
             'selected_carriers': selected,
@@ -5281,6 +5328,10 @@ def generate():
                 generate_rate_card(job_dir, mapping_config, merchant_pricing)
             except Exception as e:
                 write_error(job_dir, f'Generation failed: {str(e)}')
+
+        if app.config.get('TESTING'):
+            run_generation()
+            return jsonify({'success': True, 'status': 'completed'})
 
         thread = threading.Thread(target=run_generation, daemon=True)
         thread.start()
@@ -6047,16 +6098,21 @@ def download_normalized(job_id):
     
     return send_file(normalized_csv, as_attachment=True, download_name='normalized.csv')
 
-if __name__ == '__main__':
-    # Preload template and rate tables into cache at startup
+def _preload_resources():
+    """Preload template data and rate tables when the module is imported."""
     try:
-        _get_cached_template()
         template_path = Path('#New Template - Rate Card.xlsx')
         if not template_path.exists():
             template_path = Path('Rate Card Template.xlsx')
+
+        _get_cached_template()
         _load_rate_tables(str(template_path))
         _get_pricing_controls(str(template_path))
-        print("Template and rate tables preloaded into cache")
-    except Exception as e:
-        print(f"Warning: Could not preload template: {e}")
+        logging.info("Template and rate tables preloaded into cache")
+    except Exception as exc:
+        logging.warning(f"Could not preload template: {exc}")
+
+_preload_resources()
+
+if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)

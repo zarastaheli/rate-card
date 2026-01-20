@@ -24,8 +24,10 @@ A Flask application for generating rate cards from raw carrier invoice CSV files
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python app.py
+gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --preload --log-level info
 ```
+
+For quick local validation you can still run `python app.py` (the app default is the Flask development server, but production deployments should use Gunicorn).
 
 Windows (PowerShell):
 
@@ -33,7 +35,7 @@ Windows (PowerShell):
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python app.py
+gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --preload --log-level info
 ```
 
 Run tests (if present):

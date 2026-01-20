@@ -24,7 +24,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python app.py"
+args = "gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --log-level info --preload"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
@@ -36,4 +36,4 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["gunicorn", "--bind=0.0.0.0:5000", "--workers=2", "--timeout=120", "app:app"]
+run = ["gunicorn", "app:app", "--workers", "3", "--timeout", "120", "--bind", "0.0.0.0:5000", "--log-level", "info", "--preload"]

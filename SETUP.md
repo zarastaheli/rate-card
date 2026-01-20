@@ -3,12 +3,12 @@
 ## One-Command Setup
 
 ```bash
-python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python app.py
+python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --preload --log-level info
 ```
 
 On Windows:
 ```bash
-python -m venv venv && venv\Scripts\activate && pip install -r requirements.txt && python app.py
+python -m venv venv && venv\Scripts\activate && pip install -r requirements.txt && gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --preload --log-level info
 ```
 
 ## Step-by-Step
@@ -32,8 +32,10 @@ python -m venv venv && venv\Scripts\activate && pip install -r requirements.txt 
 
 4. **Run the application:**
    ```bash
-   python app.py
+   gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --preload --log-level info
    ```
+
+   If you're doing quick development work, `python app.py` is still available but should not be used for production.
 
 5. **Open in browser:**
    Navigate to `http://localhost:5000`
