@@ -6,9 +6,11 @@ A Flask-based web application for shipping rate card analysis. The app processes
 ## Project Structure
 ```
 .
-├── app.py                      # Main Flask application (5000+ lines)
+├── app.py                      # Main Flask application (7000+ lines)
 ├── usps_zones.py              # USPS zone lookup utilities
 ├── requirements.txt           # Python dependencies
+├── data/                      # Data files
+│   └── zip3_zone_lookup.csv  # USPS zone mappings (850K entries)
 ├── templates/                 # Jinja2 HTML templates
 │   ├── entry.html            # Entry portal
 │   ├── screen1.html          # Upload flow
@@ -139,6 +141,20 @@ Eligibility requires BOTH ZIP code whitelist AND volume thresholds:
 - When annual orders update, explicit overrides are cleared and eligibility recalculates
 - Amazon/UniUni are automatically added/removed from redo carriers and merchant pricing
 - No DHL carrier support (removed from all carrier lists)
+
+## USPS Zone Lookup
+The app uses a local CSV file for USPS zone lookups (no live API calls):
+- **File**: `data/zip3_zone_lookup.csv` (8MB, 850,020 mappings)
+- **Format**: `origin_zip3,dest_zip3,zone`
+- **Functions**: `get_zone_from_zips(origin_zip, dest_zip)` returns zone string or None
+- **Performance**: Loaded once at startup, cached in memory via `_ZONE_MAP`
+- **Fallback**: Returns None for missing mappings (logged as warning)
+
+## Deployment Configuration
+- **Type**: Reserved VM (always-on, no cold starts)
+- **Command**: `gunicorn app:app --workers 4 --timeout 180 --bind 0.0.0.0:5000 --preload --log-level info`
+- **Benefits**: Eliminates cold start delays that caused 60+ second load times
+- **Preload**: `--preload` ensures rate tables and zone map are loaded once before forking
 
 ## Notes
 - The template file `#New Template - Rate Card.xlsx` must be in the project root
