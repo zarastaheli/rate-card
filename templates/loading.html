@@ -180,20 +180,32 @@
     async function startGeneration() {
       const token = "{{ token }}";
       try {
-        await fetch('/api/generate', {
+        const res = await fetch('/api/generate', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ job_id: token })
         });
+        const data = await res.json();
+        
+        if (data.status === 'completed') {
+          stopCountdown();
+          window.location = `/dashboard/${token}`;
+          return;
+        }
+        
+        if (data.error) {
+          stopCountdown();
+          showError(data.error);
+          return;
+        }
       } catch (e) {
-        showError('Error starting generation.');
+        showError('Error during generation. Please try again.');
       }
     }
 
     document.addEventListener("DOMContentLoaded", () => {
       updateEtaDisplay();
       startGeneration();
-      pollStatus();
     });
   </script>
 </body>

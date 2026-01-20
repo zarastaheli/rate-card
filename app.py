@@ -5557,21 +5557,14 @@ def generate():
         with open(progress_file, 'w') as f:
             json.dump(existing_progress, f)
         
-        # Generate Excel and dashboard metrics in background thread
-        def run_generation():
-            try:
-                generate_rate_card(job_dir, mapping_config, merchant_pricing)
-            except Exception as e:
-                write_error(job_dir, f'Generation failed: {str(e)}')
-
-        if app.config.get('TESTING'):
-            run_generation()
+        # Generate Excel and dashboard metrics synchronously
+        # This takes ~50 seconds but is reliable on autoscale deployments
+        try:
+            generate_rate_card(job_dir, mapping_config, merchant_pricing)
             return jsonify({'success': True, 'status': 'completed'})
-
-        thread = threading.Thread(target=run_generation, daemon=True)
-        thread.start()
-        
-        return jsonify({'success': True, 'status': 'started'})
+        except Exception as e:
+            write_error(job_dir, f'Generation failed: {str(e)}')
+            return jsonify({'error': f'Generation failed: {str(e)}'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
