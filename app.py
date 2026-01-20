@@ -1904,8 +1904,8 @@ def _calculate_all_carriers_batch(job_dir, all_carriers, mapping_config):
             'Est. Merchant Annual Savings': est_savings,
             'Est. Redo Deal Size': est_redo_deal,
             'Spread Available': spread_available,
-            'Orders Winable': orders_winable,
-            'Orders Won': orders_won,
+            '% Orders We Could Win': orders_winable,
+            '% Orders Won W/ Spread': orders_won,
             'Orders Analyzed': total_qualified,
             'Average Label Cost': avg_qualified_label_cost
         }
@@ -2038,8 +2038,8 @@ def _calculate_summary_from_context(selected_dashboard, context):
         'Est. Merchant Annual Savings': est_savings,
         'Est. Redo Deal Size': est_redo_deal,
         'Spread Available': spread_available,
-        'Orders Winable': orders_winable,
-        'Orders Won': orders_won,
+        '% Orders We Could Win': orders_winable,
+        '% Orders Won W/ Spread': orders_won,
         'Orders Analyzed': total_qualified,
         'Average Label Cost': avg_qualified_label_cost
     }
