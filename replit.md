@@ -32,37 +32,29 @@ A Flask-based web application for shipping rate card analysis. The app processes
 - Werkzeug - WSGI utilities
 
 ## Dashboard Caching Architecture
-The dashboard uses a hybrid approach for accuracy and speed:
+The dashboard uses fast Python calculations for instant loading:
 
-### Hybrid Computation Strategy
-- **Summary metrics**: Computed via LibreOffice recalculation (Excel-accurate, ~2 min one-time)
-- **Per-carrier metrics**: Computed via Python (fast, responsive UI)
-- **Result**: Summary shows exact Excel values ($11,454.81 spread, 45.61% winnable)
+### Computation Strategy
+- **All metrics**: Computed via Python (instant, ~0.1 second)
+- **Accuracy**: Within ~10% of Excel formula values
+- **Speed priority**: Dashboard loads instantly instead of waiting 2+ minutes
 
 ### Cache Files (per job in `runs/<job_id>/`)
-- `dashboard_breakdown.json` - Pre-computed per-carrier metrics (Python)
-- `dashboard_summary.json` - Summary metrics by carrier selection (LibreOffice)
+- `dashboard_breakdown.json` - Pre-computed per-carrier metrics
+- `dashboard_summary.json` - Summary metrics by carrier selection
 
 ### Cache Flow
-1. **On Generate**: LibreOffice recalculates Excel file (~2 min)
-2. **Hash Computed**: SHA256 hash computed AFTER LibreOffice modifies file
-3. **Metrics Cached**: Summary from Excel cells, per-carrier from Python
-4. **On Dashboard Load**: Fast JSON read only, instant display
-5. **If Cache Missing**: Return `pending=true`, trigger background job
-
-### Cache Invalidation
-- Uses SHA256 hash (`source_hash`) computed AFTER LibreOffice recalculation
-- Hash must be computed after file modification to avoid false invalidation
+1. **On Generate**: Python computes all metrics (~1 second total)
+2. **On Dashboard Load**: Fast JSON read only, instant display
+3. **If Cache Missing**: Return `pending=true`, trigger background computation
 
 ### Key Functions
-- `_precompute_dashboard_metrics()` - Hybrid: LibreOffice summary + Python per-carrier
-- `_recalculate_excel_with_libreoffice()` - LibreOffice recalc for accurate formulas
-- `_read_metrics_from_excel_cells()` - Read summary from Excel cells C5-C12
+- `_precompute_dashboard_metrics()` - Python-based fast calculation
+- `_calculate_metrics_fast()` - Core metric calculation using pandas
 - `_read_dashboard_cache()` / `_write_dashboard_cache()` - JSON cache I/O
 
 ### Technical Notes
-- openpyxl cannot evaluate Excel formulas (writes them but can't compute)
-- LibreOffice is required to evaluate complex Excel functions like XLOOKUP
+- LibreOffice recalculation code exists but is disabled for speed
 - Power Automate integration exists but requires Microsoft 365 premium license
 
 ## Notes
