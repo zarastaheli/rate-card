@@ -836,8 +836,8 @@
         return;
       }
       if (data.pending || data.summary_pending) {
-        setLoading(true, 'Computing summary metrics (this may take up to 2 minutes)...', true);
-        setTimeout(() => loadDashboard(selected, initial, recalculating, true), 1500);
+        setLoading(true, 'Loading summary...', true);
+        setTimeout(() => loadDashboard(selected, initial, recalculating, true), 2000);
         return;
       }
       const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
