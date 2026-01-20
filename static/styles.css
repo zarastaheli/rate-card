@@ -92,6 +92,8 @@ body.tight-fit .upload-area {
   animation: cardFade 0.5s ease;
   display: flex;
   flex-direction: column;
+  position: relative;
+  overflow: hidden;
 }
 
 .card--mapping {
@@ -1102,6 +1104,13 @@ h1,
   display: none;
 }
 
+.card .modal-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(15, 23, 42, 0.45);
+}
+
 .modal-card {
   width: min(680px, 92vw);
   background: #ffffff;
@@ -1146,6 +1155,9 @@ h1,
   align-items: center;
   justify-content: center;
   gap: 12px;
+  position: relative;
+  width: 100%;
+  padding: 0 32px;
   margin: 10px 0 22px;
 }
 
@@ -1170,6 +1182,10 @@ h1,
   padding: 6px;
   border-radius: 8px;
   cursor: pointer;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .deal-size-copy:hover {
