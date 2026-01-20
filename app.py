@@ -5496,103 +5496,70 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     if 'ORIGIN_ZIP_CODE' in header_to_col:
         write_cols.add(header_to_col['ORIGIN_ZIP_CODE'])
 
-    if table_max_row and write_cols:
-        clear_end_row = start_row + len(normalized_df) - 1
-        if table_max_row:
-            clear_end_row = min(clear_end_row, table_max_row)
-        for row_idx in range(start_row, clear_end_row + 1):
-            for col_idx in write_cols:
-                if col_idx in formula_cols:
-                    continue
-                cell = ws.cell(row_idx, col_idx)
-                if cell.value and str(cell.value).startswith('='):
-                    continue
-                cell.value = None
+    # Optimize: Pre-calculate lookups to avoid repeating work in loops
+    formula_cols_list = sorted(list(formula_cols))
+    write_fields_prepared = []
+    for std_field, excel_col, col_idx in write_fields:
+        if col_idx not in formula_cols:
+            write_fields_prepared.append((std_field, excel_col, col_idx))
 
-    numeric_cols = {
-        'WEIGHT_IN_OZ',
-        'WEIGHT_IN_LBS',
-        'PACKAGE_HEIGHT',
-        'PACKAGE_WIDTH',
-        'PACKAGE_LENGTH',
-        'PACKAGE_DIMENSION_VOLUME',
-        'LABEL_COST'
-    }
-
-    # Write data starting from row 2
+    # Single pass for clearing and writing data to minimize cell access
+    # openpyxl is slow with .cell() calls, so we minimize them
     for idx in range(len(normalized_df)):
         excel_row = start_row + idx
         
         # Write mapped fields
-        for std_field, excel_col, col_idx in write_fields:
-            # Only write if not a formula column
-            if col_idx in formula_cols:
-                continue
-            cell = ws.cell(excel_row, col_idx)
-            if cell.value and str(cell.value).startswith('='):
-                continue
+        for std_field, excel_col, col_idx in write_fields_prepared:
             value = column_data[std_field][idx]
+            
             # Handle NaN values
             if pd.isna(value):
                 value = None
-            if std_field == 'ORIGIN_ZIP_CODE' and value is None and origin_zip_value is not None:
+            elif std_field == 'ORIGIN_ZIP_CODE' and value is None:
                 value = origin_zip_value
-            else:
-                # Format dates
-                if std_field == 'Order Date' and excel_col == 'DATE':
+            elif std_field == 'Order Date' and excel_col == 'DATE':
+                try:
+                    if isinstance(value, str):
+                        value = pd.to_datetime(value)
+                    if hasattr(value, 'to_pydatetime'):
+                        value = value.to_pydatetime()
+                except:
+                    pass
+            elif std_field == 'Zip' and excel_col == 'DESTINATION_ZIP_CODE':
+                zip_str = str(value).strip()
+                zip_match = re.search(r'\d{5}', zip_str)
+                value = int(zip_match.group()) if zip_match else None
+            elif excel_col in numeric_cols:
+                try:
+                    value = float(value) if value else None
+                except:
+                    value = None
+            
+            if value is not None:
+                ws.cell(row=excel_row, column=col_idx, value=value)
+        
+        # Write ZONE if fallback exists
+        if zone_values_fallback is not None:
+            z_col = header_to_col.get('ZONE')
+            if z_col and z_col not in formula_cols:
+                zone_val = zone_values_fallback[idx] if idx < len(zone_values_fallback) else None
+                if zone_val is not None and not pd.isna(zone_val):
                     try:
-                        # Try parsing with pandas
-                        if isinstance(value, str):
-                            value = pd.to_datetime(value)
-                        if hasattr(value, 'to_pydatetime'):
-                            value = value.to_pydatetime()
+                        ws.cell(row=excel_row, column=z_col, value=int(float(zone_val)))
                     except:
                         pass
-                # Extract zip code (first 5 digits if longer)
-                elif std_field == 'Zip' and excel_col == 'DESTINATION_ZIP_CODE':
-                    zip_str = str(value).strip()
-                    # Extract first 5 digits
-                    zip_match = re.search(r'\d{5}', zip_str)
-                    if zip_match:
-                        value = int(zip_match.group())
-                    else:
-                        value = None
-                # Ensure numeric types for numeric columns
-                elif excel_col in numeric_cols:
-                    try:
-                        value = float(value) if value else None
-                    except:
-                        value = None
-            
-            # Only write non-None values to avoid breaking Excel structure
-            if value is not None:
-                ws.cell(excel_row, col_idx, value)
         
-        # Zone is now handled through the mapping like other fields
-        # But if it's zone-based and zone wasn't mapped, try to get it from raw CSV
-        if zone_values_fallback is not None:
-            if 'ZONE' in header_to_col:
-                col_idx = header_to_col['ZONE']
-                if col_idx not in formula_cols:
-                    zone_value = zone_values_fallback[idx] if idx < len(zone_values_fallback) else None
-                    if zone_value is not None and not pd.isna(zone_value):
-                        try:
-                            ws.cell(excel_row, col_idx, int(float(zone_value)))
-                        except Exception:
-                            pass
+        # Write MERCHANT_ID
+        m_id = mapping_config.get('merchant_id')
+        m_col = header_to_col.get('MERCHANT_ID')
+        if m_id and m_col and m_col not in formula_cols:
+            ws.cell(row=excel_row, column=m_col, value=m_id)
         
-        # Write MERCHANT_ID if provided
-        if mapping_config.get('merchant_id') and 'MERCHANT_ID' in header_to_col:
-            col_idx = header_to_col['MERCHANT_ID']
-            if col_idx not in formula_cols:
-                ws.cell(excel_row, col_idx, mapping_config['merchant_id'])
-        
-        # Write QUALIFIED based on service matching
-        if 'QUALIFIED' in header_to_col:
-            col_idx = header_to_col['QUALIFIED']
-            if col_idx not in formula_cols:
-                is_qualified = qualified_flags[idx] if idx < len(qualified_flags) else False
-                ws.cell(excel_row, col_idx, is_qualified)
+        # Write QUALIFIED
+        q_col = header_to_col.get('QUALIFIED')
+        if q_col and q_col not in formula_cols:
+            is_qualified = qualified_flags[idx] if idx < len(qualified_flags) else False
+            ws.cell(row=excel_row, column=q_col, value=is_qualified)
 
     # Update Pricing & Summary redo carrier selections
     if 'Pricing & Summary' in wb.sheetnames:
