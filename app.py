@@ -5688,9 +5688,19 @@ def dashboard_data(job_id):
         annual_orders_missing = _annual_orders_missing(mapping_config)
         pct_off, dollar_off = _usps_market_discount_values(mapping_config)
         
+        # Check if Excel file exists (may be generating in background)
         rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
-        if not rate_card_files:
-            return jsonify({'error': 'Rate card not found'}), 404
+        excel_ready = len(rate_card_files) > 0
+        
+        # Check for pre-computed dashboard cache (available even without Excel)
+        cache = _read_dashboard_cache(job_dir)
+        if not cache.get('ready') and not excel_ready:
+            # Neither cache nor Excel exists - try to compute now
+            try:
+                _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
+                cache = _read_dashboard_cache(job_dir)
+            except Exception as e:
+                return jsonify({'error': 'Dashboard data not available yet', 'excel_generating': True}), 202
         
         current_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
         
@@ -5737,15 +5747,17 @@ def dashboard_data(job_id):
         )
         carrier_percentages = _carrier_distribution(job_dir, mapping_config, available_carriers)
         
-        cache = _read_dashboard_cache(job_dir)
+        # Re-read cache if needed (may have been read earlier for initial check)
+        if not cache.get('ready'):
+            cache = _read_dashboard_cache(job_dir)
+        
         # Only check rate card file hash (first part) for cache validity
-        # Config hash can change but rate card content is what matters
         cached_hash = cache.get('source_hash', '')
         cached_file_hash = cached_hash.split(':')[0] if cached_hash else ''
         current_file_hash = current_hash.split(':')[0] if current_hash else ''
         cache_valid = cache.get('ready') and cached_file_hash == current_file_hash
         
-        if not cache_valid:
+        if not cache_valid and excel_ready:
             _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
             cache = _read_dashboard_cache(job_dir)
         
@@ -5773,7 +5785,8 @@ def dashboard_data(job_id):
                 'usps_market_pct_off': pct_off,
                 'usps_market_dollar_off': dollar_off,
                 'carrier_percentages': carrier_percentages,
-                'per_carrier_total': len(selected_dashboard or available_carriers)
+                'per_carrier_total': len(selected_dashboard or available_carriers),
+                'excel_ready': excel_ready
             })
         
         selection_key = _selection_cache_key(selected_dashboard)
@@ -5800,7 +5813,8 @@ def dashboard_data(job_id):
             'show_usps_market_discount': show_usps_market_discount,
             'usps_market_pct_off': pct_off,
             'usps_market_dollar_off': dollar_off,
-            'carrier_percentages': carrier_percentages
+            'carrier_percentages': carrier_percentages,
+            'excel_ready': excel_ready
         })
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 500
