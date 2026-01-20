@@ -5918,10 +5918,10 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
 
     # Step 3: Save and finalize
     write_progress(job_dir, 'saving', True)
+    # Force Excel to recalculate all formulas when file is opened
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.calcMode = "auto"
-    if hasattr(wb, "_calcChain"):
-        wb._calcChain = None
+    # Note: Do NOT remove _calcChain as it's needed for Excel to know which cells to recalculate
     
     # Save the workbook atomically
     temp_file = None
