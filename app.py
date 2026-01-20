@@ -6109,6 +6109,14 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     start_row = 2
     m_id = mapping_config.get('merchant_id')
     m_col = header_to_col.get('MERCHANT_ID')
+    qualified_col = header_to_col.get('QUALIFIED')
+    
+    # Pre-compute normalized service set for QUALIFIED column (outside loop for efficiency)
+    included_services = merchant_pricing.get('included_services', [])
+    if not included_services:
+        available_services = _unique_cleaned_services(normalized_df)
+        included_services = default_included_services(available_services)
+    normalized_selected_services = {normalize_service_name(s) for s in included_services}
     
     for row_idx in range(len(normalized_df)):
         excel_row = start_row + row_idx
@@ -6131,6 +6139,12 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         # MERCHANT_ID
         if m_col and m_col not in formula_cols and m_id:
             ws.cell(excel_row, m_col).value = m_id
+        
+        # QUALIFIED - TRUE if service level is selected, FALSE otherwise
+        if qualified_col and qualified_col not in formula_cols:
+            service_value = row_data.get('CLEANED_SHIPPING_SERVICE', '')
+            is_qualified = normalize_service_name(str(service_value)) in normalized_selected_services if service_value else False
+            ws.cell(excel_row, qualified_col).value = is_qualified
     
     logging.info(f"Raw Data written: {len(normalized_df)} rows")
     
