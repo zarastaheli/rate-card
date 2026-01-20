@@ -3277,8 +3277,10 @@ def _start_summary_cache(job_dir, source_mtime, selected_dashboard):
 
 def _find_pricing_section(ws, section_title):
     title_cell = None
-    for row in ws.iter_rows():
-        for cell in row:
+    # Limit search to first 200 rows - section headers should be near the top
+    max_search_rows = min(200, ws.max_row)
+    for row_idx in range(1, max_search_rows + 1):
+        for cell in ws[row_idx]:
             if cell.value and str(cell.value).strip() == section_title:
                 title_cell = cell
                 break
@@ -3331,7 +3333,9 @@ def _scan_section_rows(ws, section_title, stop_titles):
         return None, None, None, []
     rows = []
     row_idx = header_row_idx + 1
-    while True:
+    # Limit to max_row to prevent infinite loops
+    max_row = ws.max_row
+    while row_idx <= max_row:
         label_val = ws.cell(row_idx, label_col).value
         normalized = normalize_redo_label(label_val)
         if not normalized or normalized in stop_titles:
@@ -3418,7 +3422,9 @@ def update_pricing_summary_merchant_service_levels(ws, selected_services, normal
         ws.cell(row_idx, use_col, 'Yes' if normalized in selected_normalized else 'No')
         row_idx += 1
 
-    while True:
+    # Clear remaining rows up to next section (with max_row limit to prevent infinite loops)
+    max_row = ws.max_row
+    while row_idx <= max_row:
         cell = ws.cell(row_idx, label_col)
         normalized = normalize_redo_label(cell.value)
         if not normalized or normalized in stop_titles:
