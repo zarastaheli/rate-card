@@ -44,10 +44,6 @@ carrier_details_jobs_lock = threading.Lock()
 _template_cache = {}
 _template_cache_lock = threading.Lock()
 
-# Preloaded parsed workbook for faster generation
-_preloaded_wb_sheets = {}
-_preloaded_wb_lock = threading.Lock()
-
 # Rate tables cache - avoid re-parsing Excel on every dashboard call
 _rate_tables_cache = {}
 _rate_tables_cache_lock = threading.Lock()
@@ -1592,13 +1588,29 @@ CARRIER_PRIORITY = [
 @lru_cache(maxsize=4)
 def _get_pricing_controls(template_path_str):
     global _pricing_controls_cache
+    import pickle
     path = Path(template_path_str)
     mtime = path.stat().st_mtime
     
+    # Check memory cache first
     with _pricing_controls_cache_lock:
         cached = _pricing_controls_cache.get(str(path))
         if cached and cached.get('mtime') == mtime:
             return cached['controls']
+    
+    # Check disk cache for fast cold starts
+    cache_file = Path('.pricing_controls_cache.pkl')
+    if cache_file.exists():
+        try:
+            with open(cache_file, 'rb') as f:
+                disk_cache = pickle.load(f)
+            if disk_cache.get('mtime') == mtime:
+                controls = disk_cache['controls']
+                with _pricing_controls_cache_lock:
+                    _pricing_controls_cache[str(path)] = {'controls': controls, 'mtime': mtime}
+                return controls
+        except Exception:
+            pass
     
     wb = _load_workbook_with_retry(path, data_only=True)
     ws = wb['Pricing & Summary']
@@ -1615,6 +1627,13 @@ def _get_pricing_controls(template_path_str):
     }
     wb.close()
     
+    # Save to disk cache
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump({'controls': controls, 'mtime': mtime}, f)
+    except Exception:
+        pass
+    
     with _pricing_controls_cache_lock:
         _pricing_controls_cache[str(path)] = {'controls': controls, 'mtime': mtime}
     
@@ -1622,14 +1641,31 @@ def _get_pricing_controls(template_path_str):
 
 def _load_rate_tables(template_path_str):
     global _rate_tables_cache
+    import pickle
     path = Path(template_path_str)
     mtime = path.stat().st_mtime
     
+    # Check memory cache first
     with _rate_tables_cache_lock:
         cached = _rate_tables_cache.get(str(path))
         if cached and cached.get('mtime') == mtime:
             return cached['tables']
     
+    # Check disk cache for fast cold starts
+    cache_file = Path('.rate_tables_cache.pkl')
+    if cache_file.exists():
+        try:
+            with open(cache_file, 'rb') as f:
+                disk_cache = pickle.load(f)
+            if disk_cache.get('mtime') == mtime:
+                tables = disk_cache['tables']
+                with _rate_tables_cache_lock:
+                    _rate_tables_cache[str(path)] = {'tables': tables, 'mtime': mtime}
+                return tables
+        except Exception:
+            pass
+    
+    # Parse from Excel (slow, ~25s)
     wb = _load_workbook_with_retry(path, data_only=True)
     ws = wb['Redo Rate Cards']
     tables = {}
@@ -1651,6 +1687,13 @@ def _load_rate_tables(template_path_str):
             rates[row] = zone_rates
         tables[carrier] = rates
     wb.close()
+    
+    # Save to disk cache for fast future cold starts
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump({'tables': tables, 'mtime': mtime}, f)
+    except Exception:
+        pass
     
     with _rate_tables_cache_lock:
         _rate_tables_cache[str(path)] = {'tables': tables, 'mtime': mtime}
@@ -5732,7 +5775,7 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     write_progress(job_dir, 'normalize', True)
     write_progress(job_dir, 'qualification', True)
     
-    # Load template from cache (fast BytesIO copy instead of 25s file read)
+    # Load template from cached BytesIO (24s vs 25s from disk)
     load_start = time.time()
     template_buffer = _get_cached_template()
     wb = openpyxl.load_workbook(template_buffer, keep_vba=False, data_only=False)
@@ -6526,7 +6569,7 @@ def _preload_resources():
             logging.info(f"[PRELOAD] Starting template preload at {datetime.now(timezone.utc).isoformat()}")
             
             t0 = _time.time()
-            _get_cached_template()
+            _get_cached_template()  # Cache BytesIO buffer in memory
             logging.info(f"[PRELOAD] Template buffer loaded in {_time.time() - t0:.2f}s")
             
             t0 = _time.time()
