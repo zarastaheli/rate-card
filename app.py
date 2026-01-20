@@ -5843,6 +5843,18 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     load_start = time.time()
     wb = _get_parsed_workbook()
     logging.info(f"Template load time: {time.time() - load_start:.1f}s")
+    
+    # Clean up corrupted tables (strings instead of Table objects) immediately after load
+    from openpyxl.worksheet.table import Table
+    for sheet in wb.worksheets:
+        corrupted_tables = [name for name, tbl in sheet.tables.items() if not isinstance(tbl, Table)]
+        for table_name in corrupted_tables:
+            try:
+                del sheet.tables[table_name]
+                logging.warning(f"Removed corrupted table '{table_name}' from sheet '{sheet.title}'")
+            except Exception:
+                pass
+    
     if 'Raw Data' not in wb.sheetnames:
         raise ValueError("Template must contain 'Raw Data' sheet")
     ws = wb['Raw Data']

@@ -1,0 +1,27 @@
+INFO:app:Redo carriers eligibility check - annual_orders=13968, amazon_eligible=False, uniuni_eligible=False, amazon_volume_avg=38.26849315068493
+INFO:app:Redo carriers response - available=['USPS Market', 'UPS Ground', 'UPS Ground Saver', 'FedEx'], selected=['USPS Market', 'UPS Ground', 'UPS Ground Saver']
+INFO:app:Redo carriers eligibility check - annual_orders=13968, amazon_eligible=False, uniuni_eligible=False, amazon_volume_avg=38.26849315068493
+INFO:root:[PRELOAD] Starting template preload at 2026-01-20T13:06:20.296019+00:00
+INFO:root:[PRELOAD] Template buffer loaded in 0.01s
+INFO:root:[PRELOAD] Rate tables parsed in 0.00s
+INFO:root:[PRELOAD] Pricing controls loaded in 0.00s
+INFO:root:[PRELOAD] All resources preloaded in 0.01s - workers are warm
+INFO:app:Using fast batch Python calculations for dashboard metrics
+INFO:app:  UniUni: Spread=39449.2207556675
+INFO:app:  USPS Market: Spread=9413.095012594458
+INFO:app:  UPS Ground: Spread=8926.566899819172
+INFO:app:  UPS Ground Saver: Spread=12809.989929864412
+INFO:app:  FedEx: Spread=15569.922015113345
+INFO:app:  Amazon: Spread=28623.492997481113
+INFO:app:Dashboard metrics cached (batch Python calculations)
+INFO:root:Dashboard metrics computed via Python (fast mode)
+INFO:root:Fast generation time: 0.1s
+INFO:root:Starting background Excel generation for 86da4a8b-5914-4cdc-8e46-f664d1aa3aa4
+INFO:root:Parsing template workbook for cache (one-time cost)...
+INFO:root:Dashboard summary request - selection_key=UPS Ground|UPS Ground Saver|USPS Market, cached=True
+INFO:root:Template parse time: 24.0s
+INFO:root:Template load time: 58.0s
+INFO:app:Computed columns sample: {'WEIGHT_IN_LBS': 1.0, 'TWO_LETTER_COUNTRY_CODE': 'US', 'CALCULATED_TWO_LETTER_COUNTRY_CODE': 'US', 'FULL_COUNTRY_NAME': 'United States', 'CLEANED_SHIPPING_SERVICE': 'DHL SM PARCEL EXPEDITED', 'SHIPPING_PRIORITY': 'EXPEDITED', 'PACKAGE_DIMENSION_VOLUME': 99, 'PACKAGE_SIZE_STATUS': 'SMALL', 'WEIGHT_CLASSIFICATION': '1-5', 'ORIGIN_ZIP_CODE': nan}
+INFO:root:Data preprocessing time: 0.0s
+INFO:root:Data write time: 0.0s for 403 rows
+ERROR:root:Background Excel generation failed: 'str' object has no attribute 'ref'
