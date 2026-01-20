@@ -100,7 +100,7 @@
             <div class="deal-summary-card">
               <div class="deal-summary-label">
                 <span class="label-with-hint">Carrier Spread
-                  <button class="calc-hint" type="button" aria-label="How calculated" title="Total spread: USPS $0.20/order; UPS avg label cost * 11%; FedEx/Amazon/UniUni use Carrier Details spread. For each carrier: spread * % orders won * adjusted orders.">?</button>
+                  <button class="calc-hint" type="button" aria-label="How calculated" title="Total spread: USPS $0.20/order; UPS avg label cost; FedEx/Amazon/UniUni use Carrier Details spread. For each carrier: spread * % orders won * adjusted orders.">?</button>
                 </span>
               </div>
               <div class="deal-summary-value" id="deal-carrier-spread">$--</div>
@@ -1152,7 +1152,7 @@
         upsPct += carrierPercent(detailMap[normalizeCarrierKey('UPS Ground Saver')]);
       }
       if (upsPct > 0 && Number.isFinite(avgLabel)) {
-        totalSpread += avgLabel * 0.11 * upsPct * effectiveOrders;
+        totalSpread += avgLabel * upsPct * effectiveOrders;
       }
 
       ['FedEx', 'Amazon', 'UniUni'].forEach((carrier) => {

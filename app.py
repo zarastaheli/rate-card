@@ -5476,13 +5476,19 @@ def generate():
         # Initialize progress
         progress_file = job_dir / 'progress.json'
         normalized_csv = job_dir / 'normalized.csv'
-        estimated_seconds = 30
+        # Base estimate is ~50s based on actual measurements:
+        # - Template parsing ~23s
+        # - Data processing ~3s
+        # - Workbook write ~24s
+        estimated_seconds = 50
         if normalized_csv.exists():
             try:
                 with open(normalized_csv, newline='') as f:
                     rows = sum(1 for _ in f) - 1
                 rows = max(rows, 0)
-                estimated_seconds = max(10, min(60, int(rows * 0.03)))
+                # Larger files take slightly longer: base 50s + 0.01s per row over 1000
+                if rows > 1000:
+                    estimated_seconds = min(90, 50 + int((rows - 1000) * 0.01))
             except Exception:
                 pass
 
