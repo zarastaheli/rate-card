@@ -2866,14 +2866,15 @@ def _read_metrics_from_excel_cells(rate_card_path):
         return {}
 
 def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=None):
-    """Pre-compute dashboard metrics: LibreOffice for summary (accurate), Python for per-carrier (fast)."""
+    """Pre-compute dashboard metrics using pure Python calculations from normalized CSV."""
     job_dir = Path(job_dir)
-    rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
-    if not rate_card_files:
-        app.logger.error("No rate card file found for precompute")
+    
+    # Check that normalized CSV exists (required for calculations)
+    normalized_csv = job_dir / 'normalized.csv'
+    if not normalized_csv.exists():
+        app.logger.error("No normalized.csv found for precompute")
         return False
     
-    rate_card_path = rate_card_files[0]
     full_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
     selected_redo = redo_config.get('selected_carriers', [])
     selected_dashboard = _dashboard_selected_from_redo(selected_redo)
