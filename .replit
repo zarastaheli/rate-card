@@ -30,6 +30,15 @@ task = "shell.exec"
 args = "gunicorn app:app --workers 4 --timeout 180 --bind 0.0.0.0:5000 --preload --log-level info"
 waitForPort = 5000
 
+[[workflows.workflow]]
+name = "USPS Zip to Zone"
+mode = "sequential"
+author = 52832104
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = ""
+
 [[ports]]
 localPort = 5000
 externalPort = 80
