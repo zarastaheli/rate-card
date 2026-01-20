@@ -15,3 +15,5 @@ requests
 Werkzeug==3.0.1
 formulas
 xlcalculator
+gunicorn
+gunicorn
