@@ -47,7 +47,7 @@
         <div class="spinner"></div>
 
         <h1 class="loading-title">Generating Your Rate Card</h1>
-        <p class="loading-subtitle">Estimated Time Remaining: <span id="eta-remaining">2m</span></p>
+        <p class="loading-subtitle">Estimated Time Remaining: <span id="eta-remaining">30s</span></p>
 
         <ul class="loading-steps">
           <li class="loading-step" data-step="normalize">
@@ -95,7 +95,18 @@
       }
     }
 
-    let lastEtaSeconds = null;
+    let countdownSeconds = 30;
+    let countdownInterval = null;
+
+    function startCountdown() {
+      const etaEl = document.getElementById('eta-remaining');
+      countdownInterval = setInterval(() => {
+        countdownSeconds = Math.max(1, countdownSeconds - 1);
+        if (etaEl) {
+          etaEl.textContent = `${countdownSeconds}s`;
+        }
+      }, 1000);
+    }
 
     async function pollStatus() {
       const token = "{{ token }}";
@@ -107,38 +118,14 @@
           renderProgress(data.progress);
         }
 
-        const etaEl = document.getElementById('eta-remaining');
-        if (etaEl) {
-          let seconds = null;
-          if (data.eta_seconds_remaining !== null && data.eta_seconds_remaining !== undefined) {
-            seconds = Math.max(0, data.eta_seconds_remaining);
-          } else if (data.progress && data.progress.eta_seconds) {
-            seconds = Math.max(0, data.progress.eta_seconds);
-          }
-          if (seconds === null) {
-            seconds = lastEtaSeconds;
-          }
-          if (lastEtaSeconds !== null && seconds !== null) {
-            seconds = Math.min(seconds, lastEtaSeconds);
-          }
-          if (seconds === null) {
-            seconds = 120;
-          }
-          lastEtaSeconds = seconds;
-          if (seconds < 60) {
-            etaEl.textContent = `${Math.max(1, Math.round(seconds))}s`;
-          } else {
-            const minutes = Math.max(1, Math.round(seconds / 60));
-            etaEl.textContent = `${minutes}m`;
-          }
-        }
-
         if (data.error) {
+          if (countdownInterval) clearInterval(countdownInterval);
           showError(data.error);
           return;
         }
 
         if (data.ready) {
+          if (countdownInterval) clearInterval(countdownInterval);
           window.location = data.redirect_url;
           return;
         }
@@ -163,6 +150,7 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
+      startCountdown();
       startGeneration();
       pollStatus();
     });
