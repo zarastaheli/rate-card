@@ -43,6 +43,9 @@ carrier_details_jobs_lock = threading.Lock()
 # Template caching - load once at startup to avoid 25s load time per generation
 _template_cache = {}
 _template_cache_lock = threading.Lock()
+# Pre-parsed workbook cache for fast generation
+_parsed_template_cache = {}
+_parsed_template_cache_lock = threading.Lock()
 
 # Rate tables cache - avoid re-parsing Excel on every dashboard call
 _rate_tables_cache = {}
@@ -73,6 +76,37 @@ def _get_cached_template():
         _template_cache[cache_key] = {
             'buffer': BytesIO(template_bytes),
             'mtime': template_path.stat().st_mtime
+        }
+        return BytesIO(template_bytes)
+
+def _get_parsed_template():
+    """Get a pre-parsed template workbook for fast generation.
+    
+    Returns a fresh workbook loaded from cached bytes each time.
+    This is faster than loading from disk but still requires parsing.
+    """
+    global _parsed_template_cache
+    template_path = Path('#New Template - Rate Card.xlsx')
+    if not template_path.exists():
+        template_path = Path('Rate Card Template.xlsx')
+    if not template_path.exists():
+        raise FileNotFoundError("Template file not found")
+    
+    cache_key = str(template_path)
+    current_mtime = template_path.stat().st_mtime
+    
+    with _parsed_template_cache_lock:
+        cached = _parsed_template_cache.get(cache_key)
+        if cached and cached.get('mtime') == current_mtime:
+            # Return cached bytes for fast loading
+            return BytesIO(cached['bytes'])
+        
+        # Cache the raw bytes
+        with open(template_path, 'rb') as f:
+            template_bytes = f.read()
+        _parsed_template_cache[cache_key] = {
+            'bytes': template_bytes,
+            'mtime': current_mtime
         }
         return BytesIO(template_bytes)
 
@@ -3709,33 +3743,41 @@ def _upsert_admin_row(ws, job_id, row_values):
     ws.append(row_values)
 
 def log_admin_entry(job_id, mapping_config, merchant_pricing, redo_config):
-    _ensure_admin_log()
-    flow_type = mapping_config.get('flow_type', 'rate_card_plus_deal_sizing') if mapping_config else ''
-    if flow_type == 'deal_sizing':
-        return
-    sheet_name = 'Deal sizing' if flow_type == 'deal_sizing' else 'Rate card + deal sizing'
-    pct_off, dollar_off = _usps_market_discount_values(mapping_config)
-    row = [
-        datetime.now(timezone.utc).isoformat(),
-        job_id,
-        flow_type,
-        mapping_config.get('merchant_name', '') if mapping_config else '',
-        mapping_config.get('merchant_id', '') if mapping_config else '',
-        bool(mapping_config.get('existing_customer')) if mapping_config else False,
-        mapping_config.get('origin_zip', '') if mapping_config else '',
-        mapping_config.get('annual_orders', '') if mapping_config else '',
-        mapping_config.get('structure', '') if mapping_config else '',
-        mapping_config.get('zone_column', '') if mapping_config else '',
-        json.dumps(mapping_config.get('mapping', {})) if mapping_config else '{}',
-        json.dumps(merchant_pricing or {}),
-        json.dumps(redo_config or {}),
-        pct_off,
-        dollar_off
-    ]
-    wb = openpyxl.load_workbook(ADMIN_LOG_PATH)
-    ws = wb[sheet_name]
-    _upsert_admin_row(ws, job_id, row)
-    wb.save(ADMIN_LOG_PATH)
+    """Log admin entry asynchronously to avoid blocking main thread."""
+    def _log_async():
+        try:
+            _ensure_admin_log()
+            flow_type = mapping_config.get('flow_type', 'rate_card_plus_deal_sizing') if mapping_config else ''
+            if flow_type == 'deal_sizing':
+                return
+            sheet_name = 'Deal sizing' if flow_type == 'deal_sizing' else 'Rate card + deal sizing'
+            pct_off, dollar_off = _usps_market_discount_values(mapping_config)
+            row = [
+                datetime.now(timezone.utc).isoformat(),
+                job_id,
+                flow_type,
+                mapping_config.get('merchant_name', '') if mapping_config else '',
+                mapping_config.get('merchant_id', '') if mapping_config else '',
+                bool(mapping_config.get('existing_customer')) if mapping_config else False,
+                mapping_config.get('origin_zip', '') if mapping_config else '',
+                mapping_config.get('annual_orders', '') if mapping_config else '',
+                mapping_config.get('structure', '') if mapping_config else '',
+                mapping_config.get('zone_column', '') if mapping_config else '',
+                json.dumps(mapping_config.get('mapping', {})) if mapping_config else '{}',
+                json.dumps(merchant_pricing or {}),
+                json.dumps(redo_config or {}),
+                pct_off,
+                dollar_off
+            ]
+            wb = openpyxl.load_workbook(ADMIN_LOG_PATH)
+            ws = wb[sheet_name]
+            _upsert_admin_row(ws, job_id, row)
+            wb.save(ADMIN_LOG_PATH)
+        except Exception as e:
+            logging.error(f"Failed to log admin entry: {e}")
+    
+    thread = threading.Thread(target=_log_async, daemon=True)
+    thread.start()
 
 @app.route('/')
 def index():
@@ -4647,9 +4689,6 @@ def deal_sizing_standalone():
         if annual_orders_value <= 0:
             return jsonify({'error': 'Annual orders is required'}), 400
 
-        _ensure_admin_log()
-        wb = openpyxl.load_workbook(ADMIN_LOG_PATH)
-        ws = wb['Deal sizing']
         def _num(value):
             try:
                 return float(value)
@@ -4709,8 +4748,21 @@ def deal_sizing_standalone():
             printing,
             total_size
         ]
-        ws.append(row)
-        wb.save(ADMIN_LOG_PATH)
+        
+        # Save to admin log asynchronously to avoid blocking the response
+        def save_admin_log_async():
+            try:
+                _ensure_admin_log()
+                wb = openpyxl.load_workbook(ADMIN_LOG_PATH)
+                ws = wb['Deal sizing']
+                ws.append(row)
+                wb.save(ADMIN_LOG_PATH)
+            except Exception as e:
+                logging.error(f"Failed to save admin log: {e}")
+        
+        thread = threading.Thread(target=save_admin_log_async, daemon=True)
+        thread.start()
+        
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
