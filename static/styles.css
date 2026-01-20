@@ -2659,6 +2659,22 @@ body.tight-fit .entry-page {
   animation: dashboard-spin 1s linear infinite;
 }
 
+.button-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  animation: dashboard-spin 1s linear infinite;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.button-spinner.is-hidden {
+  display: none;
+}
+
 .dashboard-content.is-hidden {
   display: none;
 }

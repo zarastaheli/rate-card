@@ -6040,15 +6040,18 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     write_progress(job_dir, 'excel_complete', True)
     _record_progress_stats(job_dir)
     
+    # Mark Excel as ready for download
+    excel_ready_marker = job_dir / '.excel_ready'
+    excel_ready_marker.touch()
+    
     logging.info(f"Total generation time: {time.time() - gen_start:.1f}s")
     return output_path
 
 
 def generate_rate_card_fast(job_dir, mapping_config, merchant_pricing):
-    """Fast generation mode - skip Excel I/O, use only Python calculations.
+    """Fast generation mode - compute dashboard metrics first, then generate Excel in background.
     
-    This is ~10x faster than full Excel generation but doesn't produce a downloadable
-    Excel file. The dashboard will work using cached Python calculations.
+    This shows the dashboard in ~3-5 seconds while full Excel generates in background (~50s).
     """
     import logging
     gen_start = time.time()
@@ -6079,33 +6082,67 @@ def generate_rate_card_fast(job_dir, mapping_config, merchant_pricing):
         logging.error(f"Dashboard metrics computation failed: {e}")
         raise
     
-    # Create a minimal placeholder Excel file so status check passes
-    # This is just a marker - the real data is in the JSON cache
+    # Create a placeholder Excel file with distinct name (won't be served to user)
     output_filename = f"{merchant_name} - Rate Card.xlsx"
+    placeholder_filename = f"{merchant_name} - Rate Card (Generating).xlsx"
     output_path = job_dir / output_filename
+    placeholder_path = job_dir / placeholder_filename
     
-    # Create a minimal valid xlsx file as placeholder
+    # Create placeholder so status check passes (uses glob for "* - Rate Card*")
     from openpyxl import Workbook
     placeholder_wb = Workbook()
     placeholder_ws = placeholder_wb.active
     placeholder_ws.title = "Info"
-    placeholder_ws['A1'] = "Fast Generation Mode"
-    placeholder_ws['A2'] = "Dashboard data is calculated via Python"
-    placeholder_ws['A3'] = "Full Excel generation was skipped for speed"
-    placeholder_ws['A4'] = f"Generated: {datetime.now(timezone.utc).isoformat()}"
-    placeholder_wb.save(output_path)
+    placeholder_ws['A1'] = "Generating full Excel..."
+    placeholder_ws['A2'] = "Please wait - full rate card is being generated in background"
+    placeholder_wb.save(placeholder_path)
     placeholder_wb.close()
+    
+    # Mark dashboard ready
+    write_progress(job_dir, 'excel_complete', True)
+    _record_progress_stats(job_dir)
+    logging.info(f"Fast generation time: {time.time() - gen_start:.1f}s")
+    
+    # Mark Excel generation as in-progress
+    excel_generating_marker = job_dir / '.excel_generating'
+    excel_failed_marker = job_dir / '.excel_failed'
+    excel_ready_marker = job_dir / '.excel_ready'
+    excel_generating_marker.touch()
+    # Remove any old markers
+    if excel_failed_marker.exists():
+        excel_failed_marker.unlink()
+    if excel_ready_marker.exists():
+        excel_ready_marker.unlink()
+    
+    # Start background thread to generate full Excel
+    def background_excel_generation():
+        try:
+            logging.info(f"Starting background Excel generation for {job_dir.name}")
+            generate_rate_card(job_dir, mapping_config, merchant_pricing)
+            logging.info(f"Background Excel generation complete for {job_dir.name}")
+            # Remove placeholder now that real file exists
+            if placeholder_path.exists():
+                placeholder_path.unlink()
+            # Mark as ready and remove generating marker
+            excel_ready_marker.touch()
+            if excel_generating_marker.exists():
+                excel_generating_marker.unlink()
+        except Exception as e:
+            logging.error(f"Background Excel generation failed: {e}")
+            # Mark as failed and remove generating marker
+            if excel_generating_marker.exists():
+                excel_generating_marker.unlink()
+            with open(excel_failed_marker, 'w') as f:
+                f.write(str(e))
+    
+    thread = threading.Thread(target=background_excel_generation, daemon=True)
+    thread.start()
     
     try:
         log_admin_entry(job_dir.name, mapping_config, merchant_pricing, redo_config)
     except Exception:
         pass
     
-    # Mark complete
-    write_progress(job_dir, 'excel_complete', True)
-    _record_progress_stats(job_dir)
-    
-    logging.info(f"Fast generation time: {time.time() - gen_start:.1f}s")
     return output_path
 
 
@@ -6134,9 +6171,11 @@ def status(job_id=None):
             'progress': progress
         })
 
-    # Check if generation is complete
-    rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
-    is_complete = len(rate_card_files) > 0
+    # Check if generation is complete (dashboard ready)
+    # In hybrid mode, the placeholder "* - Rate Card (Generating).xlsx" counts for dashboard readiness
+    # The full Excel is generated in background and tracked separately
+    rate_card_files = list(job_dir.glob('* - Rate Card*.xlsx'))
+    is_complete = len(rate_card_files) > 0 or progress.get('excel_complete')
     
     if is_complete:
         # Load merchant name for redirect
@@ -6337,19 +6376,81 @@ def dashboard_data(job_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/download/<job_id>/rate-card')
-def download_rate_card(job_id):
-    """Download generated rate card - may be placeholder in fast mode"""
+@app.route('/api/excel-status/<job_id>')
+def excel_status(job_id):
+    """Check if full Excel generation is complete"""
     job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
     if not job_dir.exists():
         return jsonify({'error': 'Job not found'}), 404
     
-    rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+    excel_generating_marker = job_dir / '.excel_generating'
+    excel_failed_marker = job_dir / '.excel_failed'
+    excel_ready_marker = job_dir / '.excel_ready'
+    
+    is_generating = excel_generating_marker.exists()
+    is_failed = excel_failed_marker.exists()
+    is_ready = excel_ready_marker.exists()
+    
+    error_message = None
+    if is_failed:
+        try:
+            with open(excel_failed_marker, 'r') as f:
+                error_message = f.read()
+        except Exception:
+            error_message = 'Excel generation failed'
+    
+    return jsonify({
+        'generating': is_generating,
+        'ready': is_ready and not is_generating and not is_failed,
+        'failed': is_failed,
+        'error': error_message
+    })
+
+
+@app.route('/download/<job_id>/rate-card')
+def download_rate_card(job_id):
+    """Download generated rate card"""
+    job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+    if not job_dir.exists():
+        return jsonify({'error': 'Job not found'}), 404
+    
+    # Check generation status markers
+    excel_generating_marker = job_dir / '.excel_generating'
+    excel_failed_marker = job_dir / '.excel_failed'
+    excel_ready_marker = job_dir / '.excel_ready'
+    
+    if excel_generating_marker.exists():
+        return jsonify({
+            'error': 'Excel is still generating',
+            'generating': True,
+            'message': 'The full Excel file is being generated in the background. Please wait ~45 seconds and try again.'
+        }), 202
+    
+    if excel_failed_marker.exists():
+        error_msg = 'Excel generation failed'
+        try:
+            with open(excel_failed_marker, 'r') as f:
+                error_msg = f.read()
+        except Exception:
+            pass
+        return jsonify({
+            'error': 'Excel generation failed',
+            'failed': True,
+            'message': error_msg
+        }), 500
+    
+    # Only serve file if ready marker exists (ensures it's the real file, not placeholder)
+    if not excel_ready_marker.exists():
+        return jsonify({
+            'error': 'Excel not ready',
+            'message': 'Excel file is not ready yet. Please wait a moment.'
+        }), 202
+    
+    # Find the real rate card file (not the placeholder)
+    rate_card_files = [f for f in job_dir.glob('* - Rate Card.xlsx') if '(Generating)' not in f.name]
     if not rate_card_files:
         return jsonify({'error': 'Rate card not found'}), 404
     
-    # Note: In fast mode this returns a placeholder file
-    # The dashboard metrics are calculated via Python and stored in JSON cache
     return send_file(rate_card_files[0], as_attachment=True)
 
 @app.route('/api/annual-orders/<job_id>', methods=['POST'])

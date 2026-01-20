@@ -96,15 +96,21 @@ The app tracks timestamps for each major processing phase to enable accurate ETA
 - Rate tables and pricing controls stay in memory rather than re-reading Excel
 - Generation time: ~3-5 seconds (fast mode with Python calculations only)
 
-### Fast Generation Mode
-The app uses fast generation mode by default:
-- Skips Excel template loading and saving (the slow part)
-- Computes dashboard metrics using pure Python calculations
-- Creates a placeholder Excel file for status checks
-- Dashboard works fully using JSON-cached metrics
-- **Tradeoff**: Downloaded Excel is a placeholder, not the full rate card
+### Fast Generation Mode (Hybrid)
+The app uses hybrid fast generation mode by default:
+- Dashboard loads instantly (~3-5 seconds) using pure Python calculations
+- Full Excel file generates in background (~50 seconds)
+- Dashboard shows "Generating Excel..." button while Excel is being created
+- Once Excel is ready, download button becomes active
+- Best of both worlds: fast dashboard + full Excel file
 
-To enable full Excel generation (slower), modify `generate()` to call `generate_rate_card()` instead of `generate_rate_card_fast()`.
+The flow:
+1. Fast Python calculations compute dashboard metrics (3-5s)
+2. Placeholder Excel created so status check passes
+3. Background thread starts full Excel generation
+4. `.excel_generating` marker file tracks status
+5. Dashboard polls `/api/excel-status/<job_id>` every 3 seconds
+6. When Excel is ready, download button updates to "Download Rate Card"
 
 ### Dashboard Carrier Toggle Behavior
 - **Summary**: Recalculates based on selected carriers

@@ -48,7 +48,10 @@
         </div>
         <div class="dashboard-actions">
           <div class="dashboard-actions-stack">
-            <button class="button button-primary button-no-shadow" type="button" id="download-btn">Download Rate Card</button>
+            <button class="button button-primary button-no-shadow" type="button" id="download-btn">
+              <span id="download-btn-text">Download Rate Card</span>
+              <span id="download-btn-spinner" class="button-spinner is-hidden"></span>
+            </button>
             <button class="button button-secondary" type="button" id="sharepoint-btn">View File In Sharepoint</button>
           </div>
         </div>
@@ -498,7 +501,51 @@
       });
     }
 
-    downloadBtn.addEventListener('click', () => {
+    let excelReady = false;
+    let excelCheckInterval = null;
+    const downloadBtnText = document.getElementById('download-btn-text');
+    const downloadBtnSpinner = document.getElementById('download-btn-spinner');
+
+    async function checkExcelStatus() {
+      try {
+        const res = await fetch(`/api/excel-status/${jobId}`);
+        if (res.ok) {
+          const data = await res.json();
+          excelReady = data.ready;
+          if (data.failed) {
+            downloadBtnText.textContent = 'Excel Generation Failed';
+            downloadBtnSpinner.classList.add('is-hidden');
+            downloadBtn.disabled = true;
+            if (excelCheckInterval) {
+              clearInterval(excelCheckInterval);
+              excelCheckInterval = null;
+            }
+          } else if (excelReady) {
+            downloadBtnText.textContent = 'Download Rate Card';
+            downloadBtnSpinner.classList.add('is-hidden');
+            downloadBtn.disabled = false;
+            if (excelCheckInterval) {
+              clearInterval(excelCheckInterval);
+              excelCheckInterval = null;
+            }
+          } else {
+            downloadBtnText.textContent = 'Generating Excel...';
+            downloadBtnSpinner.classList.remove('is-hidden');
+          }
+        }
+      } catch (e) {
+        console.error('Excel status check failed:', e);
+      }
+    }
+
+    checkExcelStatus();
+    excelCheckInterval = setInterval(checkExcelStatus, 3000);
+
+    downloadBtn.addEventListener('click', async () => {
+      if (!excelReady) {
+        alert('The Excel file is still generating in the background. Please wait a moment and try again.');
+        return;
+      }
       window.location.href = `/download/${jobId}/rate-card`;
     });
     sharepointBtn.addEventListener('click', () => {
