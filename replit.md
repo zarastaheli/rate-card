@@ -22,10 +22,11 @@ A Flask-based web application for shipping rate card analysis. The app processes
 └── runs/                     # Job artifacts (auto-created)
 ```
 
-- ## Running the Application
+## Running the Application
 - The app runs on port 5000
-- Run with: `gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --preload --log-level info`
+- Run with: `gunicorn app:app --workers 4 --timeout 120 --bind 0.0.0.0:5000 --preload --log-level info`
 - The Replit workflow launches the same command so the server runs in production-ready mode. Use `python app.py` only for quick local validation; production deployments should rely on Gunicorn.
+- Keep the preview open for a minute after deploy to keep workers warm instead of cold-starting
 - Open in browser: Navigate to the preview URL
 
 ## Key Dependencies
@@ -90,8 +91,26 @@ The app tracks timestamps for each major processing phase to enable accurate ETA
 
 ### Gunicorn Configuration
 - Uses `--preload` flag to parse templates/rate tables once before forking workers
-- 3 workers share preloaded data in memory (~47s startup, but fast first request)
+- 4 workers share preloaded data in memory (~42s startup, but fast first request)
 - Startup logs show `[PRELOAD]` messages for each cached resource
+- Rate tables and pricing controls stay in memory rather than re-reading Excel
+
+## Carrier Eligibility
+
+### UniUni Eligibility
+- Orders qualify if you hit the UniUni workday minimum (currently 300 orders per workday)
+- Calculation: `annual_orders / working_days_per_year >= 300`
+- Default working days per year: 260 (configurable via WORKING_DAYS_PER_YEAR env var)
+- Explicit overrides in mapping_config take precedence if set
+
+### Amazon Eligibility
+- Orders qualify if you hit the Amazon daily minimum (currently 150 orders per day)
+- Calculation: `annual_orders / 365 >= 150`
+- Explicit overrides in mapping_config take precedence if set
+
+### Eligibility Sync
+- When annual orders update, Amazon/UniUni are automatically added/removed from redo carriers and merchant pricing
+- No DHL carrier support (removed from all carrier lists)
 
 ## Notes
 - The template file `#New Template - Rate Card.xlsx` must be in the project root
