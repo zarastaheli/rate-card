@@ -5980,7 +5980,10 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         # Inject calcChain.xml from template - openpyxl strips it but Excel needs it
         # to know which cells to recalculate
         try:
-            _inject_calc_chain(temp_file, template_path)
+            tpl_path = Path('#New Template - Rate Card.xlsx')
+            if not tpl_path.exists():
+                tpl_path = Path('Rate Card Template.xlsx')
+            _inject_calc_chain(temp_file, tpl_path)
             logging.info("calcChain.xml injected from template")
         except Exception as calc_err:
             logging.warning(f"Failed to inject calcChain: {calc_err}")
