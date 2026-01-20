@@ -32,27 +32,38 @@ A Flask-based web application for shipping rate card analysis. The app processes
 - Werkzeug - WSGI utilities
 
 ## Dashboard Caching Architecture
-The dashboard uses a fast JSON-based caching system to avoid slow Excel file operations:
+The dashboard uses a hybrid approach for accuracy and speed:
+
+### Hybrid Computation Strategy
+- **Summary metrics**: Computed via LibreOffice recalculation (Excel-accurate, ~2 min one-time)
+- **Per-carrier metrics**: Computed via Python (fast, responsive UI)
+- **Result**: Summary shows exact Excel values ($11,454.81 spread, 45.61% winnable)
 
 ### Cache Files (per job in `runs/<job_id>/`)
-- `dashboard_breakdown.json` - Pre-computed per-carrier metrics
-- `dashboard_summary.json` - Aggregated metrics by carrier selection
+- `dashboard_breakdown.json` - Pre-computed per-carrier metrics (Python)
+- `dashboard_summary.json` - Summary metrics by carrier selection (LibreOffice)
 
 ### Cache Flow
-1. **On Generate**: Pre-compute all metrics during rate card generation, save to JSON
-2. **On Dashboard Load**: Fast JSON read only, no Excel loading
-3. **If Cache Missing**: Return `pending=true`, trigger background job with 120s timeout
-4. **On Carrier Selection Change**: Aggregate from cached per-carrier metrics (fast, no re-evaluation)
+1. **On Generate**: LibreOffice recalculates Excel file (~2 min)
+2. **Hash Computed**: SHA256 hash computed AFTER LibreOffice modifies file
+3. **Metrics Cached**: Summary from Excel cells, per-carrier from Python
+4. **On Dashboard Load**: Fast JSON read only, instant display
+5. **If Cache Missing**: Return `pending=true`, trigger background job
 
 ### Cache Invalidation
-- Uses SHA256 hash (`source_hash`) of rate card file instead of mtime
-- Cache is invalidated when rate card file changes
+- Uses SHA256 hash (`source_hash`) computed AFTER LibreOffice recalculation
+- Hash must be computed after file modification to avoid false invalidation
 
 ### Key Functions
-- `_precompute_dashboard_metrics()` - Pre-computes all metrics during generation
+- `_precompute_dashboard_metrics()` - Hybrid: LibreOffice summary + Python per-carrier
+- `_recalculate_excel_with_libreoffice()` - LibreOffice recalc for accurate formulas
+- `_read_metrics_from_excel_cells()` - Read summary from Excel cells C5-C12
 - `_read_dashboard_cache()` / `_write_dashboard_cache()` - JSON cache I/O
-- `_aggregate_metrics_from_carriers()` - Fast aggregation from per-carrier metrics
-- `_start_background_cache_job()` - Background computation with timeout
+
+### Technical Notes
+- openpyxl cannot evaluate Excel formulas (writes them but can't compute)
+- LibreOffice is required to evaluate complex Excel functions like XLOOKUP
+- Power Automate integration exists but requires Microsoft 365 premium license
 
 ## Notes
 - The template file `#New Template - Rate Card.xlsx` must be in the project root
