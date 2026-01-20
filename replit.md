@@ -69,6 +69,30 @@ This eliminates the 40+ second Excel parsing delay on first dashboard load.
 - Calculations replicate Excel formula logic using pandas
 - Rate tables and pricing controls are cached with file mtime checks for freshness
 
+## Phase Tracking & Progress API
+The app tracks timestamps for each major processing phase to enable accurate ETA calculations.
+
+### Phase Flow
+1. **upload** - File upload complete
+2. **mapping** - Field mapping saved
+3. **generation_start** - Excel generation initiated
+4. **qualification** - Data normalization/qualification
+5. **write_template** - Writing data to Excel template
+6. **saving** - Saving Excel file
+7. **excel_complete** - Generation finished
+
+### Status API
+`GET /api/status/<job_id>` returns:
+- `phase_timestamps` - ISO timestamps for each completed phase
+- `phase_durations` - Seconds between each phase
+- `elapsed_seconds` - Total time since job started
+- `eta_seconds_remaining` - Estimated time to completion
+
+### Gunicorn Configuration
+- Uses `--preload` flag to parse templates/rate tables once before forking workers
+- 3 workers share preloaded data in memory (~47s startup, but fast first request)
+- Startup logs show `[PRELOAD]` messages for each cached resource
+
 ## Notes
 - The template file `#New Template - Rate Card.xlsx` must be in the project root
 - Job artifacts are stored in `./runs/<job_id>/`
