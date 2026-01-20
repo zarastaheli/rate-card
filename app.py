@@ -5446,6 +5446,25 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         'PACKAGE_LENGTH', 'PACKAGE_DIMENSION_VOLUME', 'LABEL_COST'
     }
 
+    # Speed optimization: Extract data to lists first
+    column_data = {
+        field: normalized_df[field].tolist()
+        for field in field_to_excel.keys()
+        if field in normalized_df.columns
+    }
+    
+    # Pre-calculate flags
+    service_series = normalized_df.get('Shipping Service')
+    if service_series is None:
+        service_series = pd.Series([""] * len(normalized_df))
+    carrier_series = normalized_df.get('Shipping Carrier')
+    if carrier_series is None:
+        carrier_series = pd.Series([""] * len(normalized_df))
+    service_norm = service_series.fillna("").astype(str).apply(normalize_service_name)
+    carrier_norm = carrier_series.fillna("").astype(str).apply(normalize_merchant_carrier)
+    carrier_allowed = ~carrier_norm.isin(normalized_excluded)
+    qualified_flags = (service_norm.isin(normalized_selected) & carrier_allowed).tolist()
+
     write_cols = set()
     write_fields = []
     for std_field, excel_col in field_to_excel.items():
