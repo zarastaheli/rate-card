@@ -5836,101 +5836,197 @@ def write_error(job_dir, message):
     with open(progress_file, 'w') as f:
         json.dump(progress, f)
 
-def _write_cells_via_xml(xlsx_path, sheet_name, cell_updates, sheet_index=1):
-    """Write cell values directly to xlsx XML without corrupting tables.
+def _col_to_letter(col):
+    """Convert column number to Excel letter (1=A, 27=AA, etc.)"""
+    result = ""
+    while col > 0:
+        col, rem = divmod(col - 1, 26)
+        result = chr(65 + rem) + result
+    return result
+
+
+def _update_cell_value_regex(xml_content, cell_ref, value):
+    """Update or add a cell's value using regex. Preserves all XML structure."""
+    import re
     
-    Args:
-        xlsx_path: Path to xlsx file
-        sheet_name: Name of sheet (for logging)
-        cell_updates: Dict of {(row, col): value}
-        sheet_index: 1-indexed sheet number
+    # Escape value for XML
+    str_value = str(value)
+    if isinstance(value, str):
+        str_value = str_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
+    # Extract row number from cell ref (e.g., "A2" -> 2)
+    row_match = re.match(r'([A-Z]+)(\d+)', cell_ref)
+    if not row_match:
+        return xml_content, False
+    col_letters = row_match.group(1)
+    row_num = row_match.group(2)
+    
+    # First try to update existing cell
+    cell_pattern = rf'(<c\s+r="{re.escape(cell_ref)}"[^>]*>)(.*?)(</c>)'
+    
+    def replace_value(match):
+        open_tag = match.group(1)
+        content = match.group(2)
+        close_tag = match.group(3)
+        
+        v_pattern = r'<v>[^<]*</v>'
+        if re.search(v_pattern, content):
+            new_content = re.sub(v_pattern, f'<v>{str_value}</v>', content)
+        else:
+            new_content = content + f'<v>{str_value}</v>'
+        
+        return open_tag + new_content + close_tag
+    
+    result, count = re.subn(cell_pattern, replace_value, xml_content, flags=re.DOTALL)
+    
+    if count > 0:
+        return result, True
+    
+    # Cell doesn't exist - need to add it to the row
+    # Find the row element
+    row_pattern = rf'(<row[^>]*\s+r="{row_num}"[^>]*>)(.*?)(</row>)'
+    
+    def add_cell_to_row(match):
+        row_open = match.group(1)
+        row_content = match.group(2)
+        row_close = match.group(3)
+        
+        # Create new cell - use simple format
+        if isinstance(value, (int, float)):
+            new_cell = f'<c r="{cell_ref}"><v>{str_value}</v></c>'
+        else:
+            # For strings, use inline string format
+            new_cell = f'<c r="{cell_ref}" t="inlineStr"><is><t>{str_value}</t></is></c>'
+        
+        # Add cell at beginning of row content
+        return row_open + new_cell + row_content + row_close
+    
+    result, count = re.subn(row_pattern, add_cell_to_row, xml_content, flags=re.DOTALL)
+    return result, count > 0
+
+
+def _write_cells_via_regex(xlsx_path, sheet_index, cell_updates, add_to_shared_strings=None):
+    """Write cell values using optimized chunk processing. Preserves all XML structure.
+    
+    Only processes the portion of the XML that contains the rows we need to modify,
+    which is typically <1% of the file for large templates.
     """
     import re
-    from xml.etree import ElementTree as ET
     
-    NS = {'': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
-    ET.register_namespace('', NS[''])
-    
-    def col_to_letter(col):
-        result = ""
-        while col > 0:
-            col, rem = divmod(col - 1, 26)
-            result = chr(65 + rem) + result
-        return result
+    if not cell_updates:
+        return False
     
     sheet_xml_path = f'xl/worksheets/sheet{sheet_index}.xml'
     
-    # Read and modify XML
+    # Read the sheet XML
     with zipfile.ZipFile(xlsx_path, 'r') as zf:
-        xml_content = zf.read(sheet_xml_path).decode('utf-8')
+        xml_bytes = zf.read(sheet_xml_path)
+        xml_content = xml_bytes.decode('utf-8')
     
-    root = ET.fromstring(xml_content)
-    sheet_data = root.find('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheetData')
+    # Group updates by row and find max row number
+    row_updates = {}
+    max_row = 0
+    for cell_ref, value in cell_updates.items():
+        if value is None:
+            continue
+        row_match = re.match(r'([A-Z]+)(\d+)', cell_ref)
+        if row_match:
+            row_num = int(row_match.group(2))
+            max_row = max(max_row, row_num)
+            row_key = str(row_num)
+            if row_key not in row_updates:
+                row_updates[row_key] = {}
+            row_updates[row_key][cell_ref] = value
     
-    if sheet_data is None:
-        return
+    # Find the portion of XML containing our rows (typically <1% of file)
+    # Search for row after our max row to find the cutoff point
+    search_row = max_row + 10  # Buffer of 10 rows
+    cutoff_pattern = rf'<row[^>]*\s+r="{search_row}"'
+    cutoff_match = re.search(cutoff_pattern, xml_content)
     
-    # Build row lookup
-    rows = {int(r.get('r')): r for r in sheet_data.findall('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row')}
+    if cutoff_match:
+        # Only process up to this cutoff
+        process_end = cutoff_match.start()
+        prefix = xml_content[:process_end]
+        suffix = xml_content[process_end:]
+    else:
+        # For small sheets, process the whole thing
+        prefix = xml_content
+        suffix = ''
     
-    for (row_num, col_num), value in cell_updates.items():
-        cell_ref = f"{col_to_letter(col_num)}{row_num}"
+    modified = False
+    
+    # Process each row - only searching within the prefix portion
+    for row_num, cells in row_updates.items():
+        row_pattern = rf'(<row[^>]*\s+r="{row_num}"[^>]*>)(.*?)(</row>)'
         
-        # Find or create row
-        if row_num not in rows:
-            row_elem = ET.SubElement(sheet_data, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row')
-            row_elem.set('r', str(row_num))
-            rows[row_num] = row_elem
-        row_elem = rows[row_num]
-        
-        # Find or create cell
-        cell_elem = None
-        for c in row_elem.findall('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c'):
-            if c.get('r') == cell_ref:
-                cell_elem = c
-                break
-        
-        if cell_elem is None:
-            cell_elem = ET.SubElement(row_elem, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c')
-            cell_elem.set('r', cell_ref)
-        
-        # Set value
-        v_elem = cell_elem.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
-        if v_elem is None:
-            v_elem = ET.SubElement(cell_elem, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
-        
-        # Set type and value
-        if isinstance(value, (int, float)):
-            cell_elem.set('t', 'n') if 't' in cell_elem.attrib else None
-            if 't' in cell_elem.attrib:
-                del cell_elem.attrib['t']
-            v_elem.text = str(value)
-        else:
-            cell_elem.set('t', 'inlineStr')
-            is_elem = cell_elem.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}is')
-            if is_elem is None:
-                is_elem = ET.SubElement(cell_elem, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}is')
-            t_elem = is_elem.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t')
-            if t_elem is None:
-                t_elem = ET.SubElement(is_elem, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t')
-            t_elem.text = str(value)
-            if v_elem is not None:
-                cell_elem.remove(v_elem)
-    
-    # Write back to zip
-    new_xml = ET.tostring(root, encoding='unicode')
-    
-    # Create new zip with updated sheet
-    temp_path = str(xlsx_path) + '.tmp'
-    with zipfile.ZipFile(xlsx_path, 'r') as zf_in:
-        with zipfile.ZipFile(temp_path, 'w', zipfile.ZIP_DEFLATED) as zf_out:
-            for item in zf_in.namelist():
-                if item == sheet_xml_path:
-                    zf_out.writestr(item, new_xml.encode('utf-8'))
+        def process_row(match):
+            nonlocal modified
+            row_open = match.group(1)
+            row_content = match.group(2)
+            row_close = match.group(3)
+            
+            new_cells_to_add = []
+            
+            for cell_ref, value in cells.items():
+                # Escape value
+                if isinstance(value, str):
+                    str_value = str(value).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                 else:
-                    zf_out.writestr(item, zf_in.read(item))
+                    str_value = str(value)
+                
+                # Try to update existing cell in row_content
+                cell_pattern = rf'(<c\s+r="{re.escape(cell_ref)}"[^>]*>)(.*?)(</c>)'
+                
+                def update_cell(m):
+                    open_tag = m.group(1)
+                    content = m.group(2)
+                    close_tag = m.group(3)
+                    v_pattern = r'<v>[^<]*</v>'
+                    if re.search(v_pattern, content):
+                        new_content = re.sub(v_pattern, f'<v>{str_value}</v>', content)
+                    else:
+                        new_content = content + f'<v>{str_value}</v>'
+                    return open_tag + new_content + close_tag
+                
+                new_row_content, count = re.subn(cell_pattern, update_cell, row_content, flags=re.DOTALL)
+                
+                if count > 0:
+                    row_content = new_row_content
+                    modified = True
+                else:
+                    # Cell doesn't exist - add it
+                    if isinstance(value, (int, float)):
+                        new_cell = f'<c r="{cell_ref}"><v>{str_value}</v></c>'
+                    else:
+                        new_cell = f'<c r="{cell_ref}" t="inlineStr"><is><t>{str_value}</t></is></c>'
+                    new_cells_to_add.append(new_cell)
+                    modified = True
+            
+            # Add new cells at the beginning of row content
+            if new_cells_to_add:
+                row_content = ''.join(new_cells_to_add) + row_content
+            
+            return row_open + row_content + row_close
+        
+        prefix = re.sub(row_pattern, process_row, prefix, flags=re.DOTALL)
     
-    os.replace(temp_path, xlsx_path)
+    if modified:
+        # Reconstruct full XML
+        final_xml = prefix + suffix
+        
+        # Write back to zip
+        temp_path = str(xlsx_path) + '.tmp'
+        with zipfile.ZipFile(xlsx_path, 'r') as zf_in:
+            with zipfile.ZipFile(temp_path, 'w', zipfile.ZIP_DEFLATED) as zf_out:
+                for item in zf_in.namelist():
+                    if item == sheet_xml_path:
+                        zf_out.writestr(item, final_xml.encode('utf-8'))
+                    else:
+                        zf_out.writestr(item, zf_in.read(item))
+        os.replace(temp_path, xlsx_path)
+    
+    return modified
 
 
 def generate_rate_card(job_dir, mapping_config, merchant_pricing):
@@ -6014,7 +6110,7 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         'Zone': 'ZONE'
     }
     
-    # Build cell updates for Raw Data (sheet 1)
+    # Build cell updates for Raw Data (sheet 1) - use cell references like 'A2'
     raw_data_updates = {}
     start_row = 2
     m_id = mapping_config.get('merchant_id')
@@ -6028,19 +6124,23 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
             if col_idx and df_field in normalized_df.columns:
                 value = row_data.get(df_field)
                 if pd.notna(value):
-                    raw_data_updates[(excel_row, col_idx)] = value
+                    cell_ref = f"{_col_to_letter(col_idx)}{excel_row}"
+                    raw_data_updates[cell_ref] = value
         
         # ORIGIN_ZIP_CODE fallback
         origin_col = header_to_col.get('ORIGIN_ZIP_CODE')
-        if origin_col and origin_zip_value and (excel_row, origin_col) not in raw_data_updates:
-            raw_data_updates[(excel_row, origin_col)] = origin_zip_value
+        if origin_col and origin_zip_value:
+            cell_ref = f"{_col_to_letter(origin_col)}{excel_row}"
+            if cell_ref not in raw_data_updates:
+                raw_data_updates[cell_ref] = origin_zip_value
         
         # MERCHANT_ID
         if m_col and m_id:
-            raw_data_updates[(excel_row, m_col)] = m_id
+            cell_ref = f"{_col_to_letter(m_col)}{excel_row}"
+            raw_data_updates[cell_ref] = m_id
     
-    # Write Raw Data via XML (sheet 1)
-    _write_cells_via_xml(output_path, 'Raw Data', raw_data_updates, sheet_index=1)
+    # Write Raw Data via regex (sheet 1) - preserves all XML structure
+    _write_cells_via_regex(output_path, 1, raw_data_updates)
     logging.info(f"Raw Data write time: {time.time() - write_start:.1f}s for {len(normalized_df)} rows")
     
     # Build Pricing & Summary updates (sheet 2)
@@ -6059,17 +6159,16 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     
     pct_off, dollar_off = _usps_market_discount_values(mapping_config)
     
-    # Pricing & Summary cell updates - using known cell positions
-    # C9 = annual orders, C19 = pct_off, C20 = dollar_off, C29 = origin zip
+    # Pricing & Summary cell updates - using cell references
     pricing_updates = {
-        (9, 3): annual_orders_value,   # C9
-        (19, 3): pct_off,               # C19
-        (20, 3): dollar_off,            # C20
+        'C9': annual_orders_value,
+        'C19': pct_off,
+        'C20': dollar_off,
     }
     if origin_zip_value:
-        pricing_updates[(29, 3)] = origin_zip_value  # C29
+        pricing_updates['C29'] = origin_zip_value
     
-    # Redo Carriers: rows 8-13 column G (7) for Yes/No
+    # Redo Carriers: rows 8-13 column G for Yes/No
     redo_carrier_rows = {
         'USPS Market': 8,
         'UPS Ground': 9,
@@ -6080,9 +6179,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     }
     selected_set = set(selected_redo)
     for carrier, row in redo_carrier_rows.items():
-        pricing_updates[(row, 7)] = 'Yes' if carrier in selected_set else 'No'
+        pricing_updates[f'G{row}'] = 'Yes' if carrier in selected_set else 'No'
     
-    # Merchant Carriers: rows 15-20 column G (7) for Yes/No  
+    # Merchant Carriers: rows 15-20 column G for Yes/No  
     excluded_set = {normalize_merchant_carrier(c) for c in excluded_carriers}
     merchant_carrier_rows = {
         'UPS': 15,
@@ -6094,20 +6193,20 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     }
     for carrier, row in merchant_carrier_rows.items():
         carrier_norm = normalize_merchant_carrier(carrier)
-        pricing_updates[(row, 7)] = 'No' if carrier_norm in excluded_set else 'Yes'
+        pricing_updates[f'G{row}'] = 'No' if carrier_norm in excluded_set else 'Yes'
     
-    # Service Levels: rows 23-72 column G (7) for Yes/No
+    # Service Levels: rows 23-72 column G for Yes/No
     selected_services_norm = {normalize_service_name(s) for s in selected_services}
     for idx, service in enumerate(SERVICE_LEVELS):
         row = 23 + idx
         if row > 72:
             break
         service_norm = normalize_service_name(service)
-        pricing_updates[(row, 5)] = service  # Column E (5) = service name
-        pricing_updates[(row, 7)] = 'Yes' if service_norm in selected_services_norm else 'No'
+        pricing_updates[f'E{row}'] = service
+        pricing_updates[f'G{row}'] = 'Yes' if service_norm in selected_services_norm else 'No'
     
-    # Write Pricing & Summary via XML (sheet 2)
-    _write_cells_via_xml(output_path, 'Pricing & Summary', pricing_updates, sheet_index=2)
+    # Write Pricing & Summary via regex (sheet 2) - preserves all XML structure
+    _write_cells_via_regex(output_path, 2, pricing_updates)
     logging.info(f"Pricing & Summary write time: {time.time() - pricing_start:.1f}s")
     
     # Pre-compute dashboard metrics
