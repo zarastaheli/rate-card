@@ -3696,6 +3696,7 @@ def log_admin_entry(job_id, mapping_config, merchant_pricing, redo_config):
 
 @app.route('/')
 def index():
+    _preload_resources()  # Lazy load on first real request
     clean_old_runs()
     return render_template('entry.html')
 
@@ -6509,34 +6510,49 @@ def download_normalized(job_id):
     
     return send_file(normalized_csv, as_attachment=True, download_name='normalized.csv')
 
+_resources_loaded = False
+_resources_lock = threading.Lock()
+
 def _preload_resources():
-    """Preload template data and rate tables when the module is imported."""
-    import time as _time
-    preload_start = _time.time()
-    try:
-        template_path = Path('#New Template - Rate Card.xlsx')
-        if not template_path.exists():
-            template_path = Path('Rate Card Template.xlsx')
+    """Preload template data and rate tables - called lazily on first real request."""
+    global _resources_loaded
+    if _resources_loaded:
+        return
+    
+    with _resources_lock:
+        if _resources_loaded:
+            return
+        
+        import time as _time
+        preload_start = _time.time()
+        try:
+            template_path = Path('#New Template - Rate Card.xlsx')
+            if not template_path.exists():
+                template_path = Path('Rate Card Template.xlsx')
 
-        logging.info(f"[PRELOAD] Starting template preload at {datetime.now(timezone.utc).isoformat()}")
-        
-        t0 = _time.time()
-        _get_cached_template()
-        logging.info(f"[PRELOAD] Template buffer loaded in {_time.time() - t0:.2f}s")
-        
-        t0 = _time.time()
-        _load_rate_tables(str(template_path))
-        logging.info(f"[PRELOAD] Rate tables parsed in {_time.time() - t0:.2f}s")
-        
-        t0 = _time.time()
-        _get_pricing_controls(str(template_path))
-        logging.info(f"[PRELOAD] Pricing controls loaded in {_time.time() - t0:.2f}s")
-        
-        logging.info(f"[PRELOAD] All resources preloaded in {_time.time() - preload_start:.2f}s - workers are warm")
-    except Exception as exc:
-        logging.warning(f"[PRELOAD] Could not preload template: {exc}")
+            logging.info(f"[PRELOAD] Starting template preload at {datetime.now(timezone.utc).isoformat()}")
+            
+            t0 = _time.time()
+            _get_cached_template()
+            logging.info(f"[PRELOAD] Template buffer loaded in {_time.time() - t0:.2f}s")
+            
+            t0 = _time.time()
+            _load_rate_tables(str(template_path))
+            logging.info(f"[PRELOAD] Rate tables parsed in {_time.time() - t0:.2f}s")
+            
+            t0 = _time.time()
+            _get_pricing_controls(str(template_path))
+            logging.info(f"[PRELOAD] Pricing controls loaded in {_time.time() - t0:.2f}s")
+            
+            logging.info(f"[PRELOAD] All resources preloaded in {_time.time() - preload_start:.2f}s - workers are warm")
+            _resources_loaded = True
+        except Exception as exc:
+            logging.warning(f"[PRELOAD] Could not preload template: {exc}")
 
-_preload_resources()
+@app.route('/health')
+def health_check():
+    """Fast health check endpoint for deployment."""
+    return 'OK', 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)
