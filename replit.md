@@ -10,10 +10,12 @@ A Flask-based web application for shipping rate card analysis. The app processes
 ├── usps_zones.py              # USPS zone lookup utilities
 ├── requirements.txt           # Python dependencies
 ├── templates/                 # Jinja2 HTML templates
-│   └── index.html            # Main UI template
+│   ├── entry.html            # Entry portal
+│   ├── screen1.html          # Upload flow
+│   └── screen2.html          # Mapping flow
 ├── static/                   # Static assets
-│   ├── css/style.css         # Styling
-│   └── js/app.js            # Frontend logic
+│   ├── redo-logo.png         # Brand logo
+│   └── styles.css            # Styling
 ├── scripts/                  # Utility scripts
 ├── tests/                    # Test suite
 │   └── test_app.py          # Pytest tests

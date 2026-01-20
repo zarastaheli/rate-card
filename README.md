@@ -72,12 +72,12 @@ pytest --cov=. --cov-report=html
 ├── app.py                 # Flask application
 ├── requirements.txt       # Python dependencies
 ├── templates/             # HTML templates
-│   └── index.html
+│   ├── entry.html
+│   ├── screen1.html
+│   └── screen2.html
 ├── static/                # Static assets
-│   ├── css/
-│   │   └── style.css
-│   └── js/
-│       └── app.js
+│   ├── redo-logo.png
+│   └── styles.css
 ├── runs/                  # Job directories (auto-created)
 └── tests/                 # Test files
 ```

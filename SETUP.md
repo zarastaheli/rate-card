@@ -53,12 +53,12 @@ pytest tests/test_app.py -v
 ├── README.md                   # Full documentation
 ├── CHANGES.md                  # What changed and why
 ├── templates/
-│   └── index.html             # Main UI template
+│   ├── entry.html             # Entry portal
+│   ├── screen1.html           # Upload flow
+│   └── screen2.html           # Mapping flow
 ├── static/
-│   ├── css/
-│   │   └── style.css          # Styling
-│   └── js/
-│       └── app.js             # Frontend logic
+│   ├── redo-logo.png          # Brand logo
+│   └── styles.css             # Styling
 ├── tests/
 │   └── test_app.py            # Test suite
 └── runs/                       # Job artifacts (auto-created)
@@ -70,4 +70,3 @@ pytest tests/test_app.py -v
 - Job artifacts are stored in `./runs/<job_id>/`
 - Old runs (>24 hours) are automatically cleaned up
 - The app runs on port 5000 by default
-
