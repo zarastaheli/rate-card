@@ -5833,10 +5833,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     write_progress(job_dir, 'normalize', True)
     write_progress(job_dir, 'qualification', True)
     
-    # Load template from cached BytesIO
+    # Load template from cached parsed workbook (deepcopy is ~2s vs parsing at ~22s)
     load_start = time.time()
-    template_buffer = _get_cached_template()
-    wb = openpyxl.load_workbook(template_buffer, keep_vba=False, data_only=False)
+    wb = _get_parsed_workbook()
     logging.info(f"Template load time: {time.time() - load_start:.1f}s")
     if 'Raw Data' not in wb.sheetnames:
         raise ValueError("Template must contain 'Raw Data' sheet")
@@ -6003,32 +6002,47 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     
     logging.info(f"Data preprocessing time: {time.time() - preprocess_start:.1f}s")
     
-    # Write data using batch column writes (much faster than cell-by-cell)
+    # Write data using optimized bulk assignment
     write_start = time.time()
     
-    # Batch write each column at once instead of row-by-row
-    # This reduces Python function call overhead significantly
+    # OPTIMIZATION: Pre-fetch all cell references in one pass, then assign values
+    # This avoids repeated dictionary lookups and cell creation overhead
+    from openpyxl.cell.cell import Cell
+    
+    # Build a mapping of (row, col) -> value for all data at once
+    cell_updates = {}
+    
     for std_field, excel_col, col_idx in write_fields_prepared:
         col_values = column_data[std_field]
         for idx, value in enumerate(col_values):
             if value is not None:
-                ws.cell(row=start_row + idx, column=col_idx, value=value)
+                cell_updates[(start_row + idx, col_idx)] = value
     
-    # Write ZONE column in batch
+    # Add ZONE column data
     if zone_col is not None and z_col:
         for idx, zone_val in enumerate(zone_col):
             if zone_val is not None:
-                ws.cell(row=start_row + idx, column=z_col, value=zone_val)
+                cell_updates[(start_row + idx, z_col)] = zone_val
     
-    # Write MERCHANT_ID column in batch
+    # Add MERCHANT_ID column data  
     if m_id and m_col and m_col not in formula_cols:
         for idx in range(total_rows):
-            ws.cell(row=start_row + idx, column=m_col, value=m_id)
+            cell_updates[(start_row + idx, m_col)] = m_id
     
-    # Write QUALIFIED column in batch
+    # Add QUALIFIED column data
     if q_col and q_col not in formula_cols:
         for idx, is_qualified in enumerate(qualified_flags):
-            ws.cell(row=start_row + idx, column=q_col, value=is_qualified)
+            cell_updates[(start_row + idx, q_col)] = is_qualified
+    
+    # Bulk write all cells - use direct _cells access for speed
+    # This bypasses the cell() method overhead
+    cells_dict = ws._cells
+    for (row, col), value in cell_updates.items():
+        if (row, col) in cells_dict:
+            cells_dict[(row, col)].value = value
+        else:
+            cell = Cell(ws, row=row, column=col, value=value)
+            cells_dict[(row, col)] = cell
 
     logging.info(f"Data write time: {time.time() - write_start:.1f}s for {total_rows} rows")
     # Note: Formula columns (AI-AN) are preserved from template with proper row-relative references
