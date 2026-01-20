@@ -47,7 +47,7 @@
         <div class="spinner"></div>
 
         <h1 class="loading-title">Generating Your Rate Card</h1>
-        <p class="loading-subtitle">Estimated Time Remaining: <span id="eta-remaining">60s</span></p>
+        <p class="loading-subtitle">Estimated Time Remaining: <span id="eta-remaining">2m</span></p>
 
         <ul class="loading-steps">
           <li class="loading-step" data-step="normalize">
@@ -122,7 +122,7 @@
             seconds = Math.min(seconds, lastEtaSeconds);
           }
           if (seconds === null) {
-            seconds = 60;
+            seconds = 120;
           }
           lastEtaSeconds = seconds;
           if (seconds < 60) {

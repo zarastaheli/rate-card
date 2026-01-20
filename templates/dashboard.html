@@ -797,6 +797,7 @@
 
     let currentSelection = [];
     let selectionTimer = null;
+    let summaryLoading = false;
 
     function setLoading(isLoading, message, hideContent) {
       const loadingEl = document.getElementById('dashboard-loading');
@@ -836,15 +837,19 @@
         return;
       }
       if (data.pending || data.summary_pending) {
-        setLoading(true, 'Loading summary...', false);
-        const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
-        const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
-        currentSelection = filteredSelected;
-        carrierPercentages = data.carrier_percentages || {};
-        renderCarrierBars(filteredAvailable, currentSelection);
+        if (!summaryLoading) {
+          summaryLoading = true;
+          setLoading(true, 'Loading summary...', false);
+          const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+          const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+          currentSelection = filteredSelected;
+          carrierPercentages = data.carrier_percentages || {};
+          renderCarrierBars(filteredAvailable, currentSelection);
+        }
         setTimeout(() => loadDashboard(selected, initial, recalculating, true), 2000);
         return;
       }
+      summaryLoading = false;
       const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
       const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
       if (!selected && filteredSelected.length !== (data.selected_carriers || []).length) {
