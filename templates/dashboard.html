@@ -846,14 +846,14 @@
           carrierPercentages = data.carrier_percentages || {};
           renderCarrierBars(filteredAvailable, currentSelection);
         }
-        setTimeout(() => loadDashboard(selected, initial, recalculating, true), 2000);
+        setTimeout(() => loadDashboard(selected, initial, recalculating, false), 2000);
         return;
       }
       summaryLoading = false;
       const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
       const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
       if (!selected && filteredSelected.length !== (data.selected_carriers || []).length) {
-        await loadDashboard(filteredSelected, false, true, true);
+        await loadDashboard(filteredSelected, false, true, false);
         return;
       }
       annualOrdersMissing = !!data.annual_orders_missing;
