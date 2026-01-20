@@ -52,15 +52,15 @@
         <ul class="loading-steps">
           <li class="loading-step" data-step="normalize">
             <span class="loading-step-icon" aria-hidden="true"></span>
-            <span class="loading-step-label">Normalize Your Data</span>
+            <span class="loading-step-label">Analyzing Your Data</span>
           </li>
           <li class="loading-step" data-step="write_template">
             <span class="loading-step-icon" aria-hidden="true"></span>
-            <span class="loading-step-label">Write Into the Template</span>
+            <span class="loading-step-label">Loading Dashboard Summary</span>
           </li>
           <li class="loading-step" data-step="saving">
             <span class="loading-step-icon" aria-hidden="true"></span>
-            <span class="loading-step-label">Save and Finalize</span>
+            <span class="loading-step-label">Loading Carrier Breakdown</span>
           </li>
         </ul>
 
@@ -81,10 +81,10 @@
         const val = progress[key];
         
         if (typeof val === 'string' && key === 'write_template') {
-           labelEl.textContent = `Writing Data (${val})`;
+           labelEl.textContent = `Loading Summary (${val})`;
         } else {
            // Reset to original label if it was a string
-           if (key === 'write_template') labelEl.textContent = "Write Into the Template";
+           if (key === 'write_template') labelEl.textContent = "Loading Dashboard Summary";
         }
 
         const done = val === true;
