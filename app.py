@@ -5175,7 +5175,7 @@ def redo_carriers(job_id):
 
 @app.route('/api/generate', methods=['POST'])
 def generate():
-    """Start rate card generation"""
+    """Start rate card generation - computes dashboard instantly, Excel in background"""
     try:
         data = request.json
         job_id = data.get('job_id')
@@ -5197,35 +5197,39 @@ def generate():
             with open(pricing_file, 'r') as f:
                 merchant_pricing = json.load(f)
         
-        # Initialize progress
+        # Initialize progress - mark dashboard as ready immediately
         progress_file = job_dir / 'progress.json'
-        estimated_seconds = None
-        normalized_csv = job_dir / 'normalized.csv'
-        if normalized_csv.exists():
-            try:
-                with open(normalized_csv, newline='') as f:
-                    rows = sum(1 for _ in f) - 1
-                rows = max(rows, 0)
-                estimated_seconds = max(5, min(180, int(rows * 0.05)))
-            except Exception:
-                estimated_seconds = None
-
-        progress_payload = {'started_at': datetime.now(timezone.utc).isoformat()}
-        if estimated_seconds is not None:
-            progress_payload['eta_seconds'] = estimated_seconds
-
+        progress_payload = {
+            'started_at': datetime.now(timezone.utc).isoformat(),
+            'normalize': True,
+            'dashboard_ready': True,
+            'excel_generating': True
+        }
         with open(progress_file, 'w') as f:
             json.dump(progress_payload, f)
         
-        def run_generation():
+        # Pre-compute dashboard metrics SYNCHRONOUSLY (fast ~0.2 seconds)
+        try:
+            _precompute_dashboard_metrics(job_dir, mapping_config)
+        except Exception as e:
+            app.logger.warning(f"Dashboard precompute failed: {e}")
+        
+        # Generate Excel file in background thread (slow ~45 seconds)
+        def run_excel_generation():
             try:
                 generate_rate_card(job_dir, mapping_config, merchant_pricing)
             except Exception as e:
-                write_error(job_dir, f'Generation failed: {str(e)}')
+                write_error(job_dir, f'Excel generation failed: {str(e)}')
 
-        thread = threading.Thread(target=run_generation, daemon=True)
+        thread = threading.Thread(target=run_excel_generation, daemon=True)
         thread.start()
-        return jsonify({'success': True, 'status': 'started'})
+        
+        # Return immediately - dashboard is ready, Excel generating in background
+        return jsonify({
+            'success': True, 
+            'status': 'dashboard_ready',
+            'redirect': f'/dashboard/{job_id}'
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
