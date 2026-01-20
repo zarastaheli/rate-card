@@ -5564,9 +5564,11 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         if col_idx not in formula_cols:
             write_fields_prepared.append((std_field, excel_col, col_idx))
 
-    # Single pass for clearing and writing data to minimize cell access
-    # openpyxl is slow with .cell() calls, so we minimize them
-    for idx in range(len(normalized_df)):
+    # Identical to original but with more granular progress
+    total_rows = len(normalized_df)
+    for idx in range(total_rows):
+        if idx % 100 == 0:
+            write_progress(job_dir, 'write_template', f"Writing data: {idx}/{total_rows}")
         excel_row = start_row + idx
         
         # Write mapped fields
@@ -5659,7 +5661,7 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
                         target_cell.value = formula
     
     # Step 3: Save and finalize
-    write_progress(job_dir, 'finalize', True)
+    write_progress(job_dir, 'saving', True)
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.calcMode = "auto"
     if hasattr(wb, "_calcChain"):
