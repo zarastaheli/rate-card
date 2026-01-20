@@ -5422,6 +5422,17 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         if sample:
             app.logger.info("Computed columns sample: %s", sample)
     
+    # Step 2: Write into template
+    write_progress(job_dir, 'write_template', True)
+    
+    start_row = 2
+    origin_zip_value = mapping_config.get('origin_zip')
+    
+    # Pre-calculate zone fallback values if needed
+    zone_values_fallback = None
+    if 'Zone' in normalized_df.columns:
+        zone_values_fallback = normalized_df['Zone'].tolist()
+    
     # Map standard fields to Excel columns
     field_to_excel = {
         'Order Number': 'ORDER_NUMBER',
