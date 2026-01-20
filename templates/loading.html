@@ -189,7 +189,7 @@
         
         if (data.status === 'completed') {
           stopCountdown();
-          window.location = `/dashboard/${token}`;
+          window.location = `/dashboard?job_id=${token}`;
           return;
         }
         
