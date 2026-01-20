@@ -836,7 +836,12 @@
         return;
       }
       if (data.pending || data.summary_pending) {
-        setLoading(true, 'Loading summary...', true);
+        setLoading(true, 'Loading summary...', false);
+        const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+        const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+        currentSelection = filteredSelected;
+        carrierPercentages = data.carrier_percentages || {};
+        renderCarrierBars(filteredAvailable, currentSelection);
         setTimeout(() => loadDashboard(selected, initial, recalculating, true), 2000);
         return;
       }
