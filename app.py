@@ -5968,75 +5968,40 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     q_col = header_to_col.get('QUALIFIED')
     z_col = header_to_col.get('ZONE')
 
-    # OPTIMIZATION: Pre-process all data in bulk before writing
-    # This avoids per-cell Python overhead and dramatically speeds up writes
-    from openpyxl.cell.cell import Cell
+    # OPTIMIZATION: Pre-process all data using vectorized pandas operations
+    # This is much faster than Python loops
+    preprocess_start = time.time()
     
-    # Pre-process date column
+    # Pre-process date column using vectorized pandas
     if 'Order Date' in column_data:
-        date_col = []
-        for val in column_data['Order Date']:
-            if pd.isna(val):
-                date_col.append(None)
-            else:
-                try:
-                    if isinstance(val, str):
-                        val = pd.to_datetime(val)
-                    if hasattr(val, 'to_pydatetime'):
-                        val = val.to_pydatetime()
-                    date_col.append(val)
-                except:
-                    date_col.append(val)
-        column_data['Order Date'] = date_col
+        date_series = pd.Series(column_data['Order Date'])
+        date_series = pd.to_datetime(date_series, errors='coerce')
+        column_data['Order Date'] = [v.to_pydatetime() if pd.notna(v) else None for v in date_series]
     
-    # Pre-process zip column
+    # Pre-process zip column using vectorized extraction
     if 'Zip' in column_data:
-        zip_col = []
-        for val in column_data['Zip']:
-            if pd.isna(val):
-                zip_col.append(None)
-            else:
-                zip_str = str(val).strip()
-                zip_match = re.search(r'\d{5}', zip_str)
-                zip_col.append(int(zip_match.group()) if zip_match else None)
-        column_data['Zip'] = zip_col
+        zip_series = pd.Series(column_data['Zip']).fillna('').astype(str)
+        zip_extracted = zip_series.str.extract(r'(\d{5})', expand=False)
+        column_data['Zip'] = [int(v) if pd.notna(v) else None for v in zip_extracted]
     
-    # Pre-process numeric columns
+    # Pre-process numeric columns using vectorized pd.to_numeric
     for std_field, excel_col, col_idx in write_fields_prepared:
         if excel_col in numeric_cols and std_field in column_data:
-            num_col = []
-            for val in column_data[std_field]:
-                if pd.isna(val) or val is None or val == '':
-                    num_col.append(None)
-                else:
-                    try:
-                        num_col.append(float(val))
-                    except:
-                        num_col.append(None)
-            column_data[std_field] = num_col
+            num_series = pd.to_numeric(pd.Series(column_data[std_field]), errors='coerce')
+            column_data[std_field] = [float(v) if pd.notna(v) else None for v in num_series]
     
-    # Pre-process origin zip column
+    # Pre-process origin zip column using numpy where
     if 'ORIGIN_ZIP_CODE' in column_data:
-        origin_col = []
-        for val in column_data['ORIGIN_ZIP_CODE']:
-            if pd.isna(val) or val is None:
-                origin_col.append(origin_zip_value)
-            else:
-                origin_col.append(val)
-        column_data['ORIGIN_ZIP_CODE'] = origin_col
+        origin_series = pd.Series(column_data['ORIGIN_ZIP_CODE'])
+        column_data['ORIGIN_ZIP_CODE'] = [v if pd.notna(v) else origin_zip_value for v in origin_series]
     
-    # Pre-process zone values
+    # Pre-process zone values using vectorized operations
     zone_col = None
     if zone_values_fallback is not None and z_col and z_col not in formula_cols:
-        zone_col = []
-        for val in zone_values_fallback:
-            if val is not None and not pd.isna(val):
-                try:
-                    zone_col.append(int(float(val)))
-                except:
-                    zone_col.append(None)
-            else:
-                zone_col.append(None)
+        zone_series = pd.to_numeric(pd.Series(zone_values_fallback), errors='coerce')
+        zone_col = [int(v) if pd.notna(v) else None for v in zone_series]
+    
+    logging.info(f"Data preprocessing time: {time.time() - preprocess_start:.1f}s")
     
     # Write data using batch column writes (much faster than cell-by-cell)
     write_start = time.time()
