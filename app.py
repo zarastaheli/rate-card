@@ -178,8 +178,7 @@ REDO_CARRIERS = [
     "UPS Ground",
     "UPS Ground Saver",
     "FedEx",
-    "Amazon",
-    "DHL"
+    "Amazon"
 ]
 
 REDO_FORCED_ON = [
@@ -187,8 +186,8 @@ REDO_FORCED_ON = [
     "UPS Ground",
     "UPS Ground Saver"
 ]
-MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'DHL', 'UniUni']
-DASHBOARD_CARRIERS = ['UniUni', 'USPS Market', 'UPS Ground', 'UPS Ground Saver', 'FedEx', 'Amazon', 'DHL']
+MERCHANT_CARRIERS = ['USPS', 'UPS', 'Amazon', 'FedEx', 'UniUni']
+DASHBOARD_CARRIERS = ['UniUni', 'USPS Market', 'UPS Ground', 'UPS Ground Saver', 'FedEx', 'Amazon']
 FAST_DASHBOARD_METRICS = False
 WEIGHT_BUCKETS = [i / 16 for i in range(1, 16)] + list(range(1, 21))
 
@@ -861,8 +860,6 @@ def infer_redo_carrier(carrier_value, service_value):
         return 'FedEx'
     if 'AMAZON' in text:
         return 'Amazon'
-    if 'DHL' in text:
-        return 'DHL'
     return None
 
 def extract_invoice_services(raw_df, mapping_config):
@@ -922,7 +919,6 @@ def available_merchant_carriers(raw_df, mapping_config):
         'UPS': 'UPS',
         'FEDEX': 'FedEx',
         'AMAZON': 'Amazon',
-        'DHL': 'DHL',
         'UNIUNI': 'UniUni'
     }
     ordered = []
@@ -972,8 +968,6 @@ def normalize_merchant_carrier(value):
         return 'FEDEX'
     if 'AMAZON' in text:
         return 'AMAZON'
-    if 'DHL' in text:
-        return 'DHL'
     if 'UNIUNI' in text or 'UNI UNI' in text:
         return 'UNIUNI'
     return ""
@@ -994,8 +988,6 @@ def _dashboard_selected_from_redo(selected_redo):
         selected.add('Amazon')
     if 'FedEx' in selected_redo:
         selected.add('FedEx')
-    if 'DHL' in selected_redo:
-        selected.add('DHL')
     return selected
 
 def _redo_selection_from_dashboard(selected_dashboard):
@@ -1014,8 +1006,6 @@ def _redo_selection_from_dashboard(selected_dashboard):
         selected.add('AMAZON')
     if 'FedEx' in selected_dashboard:
         selected.add('FEDEX')
-    if 'DHL' in selected_dashboard:
-        selected.add('DHL')
     return selected
 
 def _read_summary_metrics(ws):
@@ -3207,12 +3197,6 @@ def update_pricing_summary_redo_carriers(ws, selected_redo_carriers):
         target_cell.value = 'Yes' if canonical in selected else 'No'
         last_row = row_idx
 
-    # Ensure DHL row exists even if template pre-population stops before it
-    if 'DHL' not in seen:
-        insert_row = last_row + 1
-        ws.cell(insert_row, label_col, 'DHL')
-        ws.cell(insert_row, use_col, 'Yes' if 'DHL' in selected else 'No')
-        last_row = insert_row
     if 'First Mile' not in seen:
         insert_row = last_row + 1
         ws.cell(insert_row, label_col, 'First Mile')
@@ -5310,7 +5294,10 @@ def redo_carriers(job_id):
                 with open(redo_file, 'r') as f:
                     saved_redo = json.load(f)
                 rs = saved_redo.get('selected_carriers', [])
-                changed = False
+                # Scrub DHL from any legacy selections
+                if 'DHL' in rs:
+                    rs = [c for c in rs if c != 'DHL']
+                changed = 'DHL' in saved_redo.get('selected_carriers', [])
                 if eligibility['amazon_eligible_final'] and 'Amazon' not in rs:
                     rs.append('Amazon')
                     changed = True
@@ -5320,8 +5307,16 @@ def redo_carriers(job_id):
                 if changed:
                     with open(redo_file, 'w') as f:
                         json.dump({'selected_carriers': rs}, f)
+                # Use saved selections (without DHL)
+                selected = [c for c in rs if c in REDO_CARRIERS]
+                for forced in REDO_FORCED_ON:
+                    if forced not in selected:
+                        selected.append(forced)
             except:
                 pass
+
+        # Filter out any invalid carriers from selected
+        selected = [c for c in selected if c in REDO_CARRIERS]
 
         return jsonify({
             'detected_carriers': available,
@@ -5947,7 +5942,7 @@ def download_rate_card(job_id):
 
 @app.route('/api/annual-orders/<job_id>', methods=['POST'])
 def update_annual_orders(job_id):
-    """Update annual orders and regenerate rate card."""
+    """Update annual orders and clear dashboard cache (fast, no Excel regeneration)."""
     try:
         job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
         if not job_dir.exists():
@@ -5970,14 +5965,61 @@ def update_annual_orders(job_id):
         with open(mapping_file, 'w') as f:
             json.dump(mapping_config, f)
 
-        merchant_pricing = {'excluded_carriers': [], 'included_services': []}
+        # Compute new eligibility based on updated annual orders
+        eligibility = compute_eligibility(
+            mapping_config.get('origin_zip'),
+            annual_orders_value,
+            mapping_config=mapping_config
+        )
+
+        # Sync redo carriers based on new eligibility
+        redo_file = job_dir / 'redo_carriers.json'
+        if redo_file.exists():
+            with open(redo_file, 'r') as f:
+                redo_config = json.load(f)
+            selected = redo_config.get('selected_carriers', [])
+            changed = False
+            if eligibility['amazon_eligible_final'] and 'Amazon' not in selected:
+                selected.append('Amazon')
+                changed = True
+            if eligibility['uniuni_eligible_final'] and 'UniUni' not in selected:
+                selected.append('UniUni')
+                changed = True
+            if not eligibility['amazon_eligible_final'] and 'Amazon' in selected:
+                selected = [c for c in selected if c != 'Amazon']
+                changed = True
+            if not eligibility['uniuni_eligible_final'] and 'UniUni' in selected:
+                selected = [c for c in selected if c != 'UniUni']
+                changed = True
+            if changed:
+                with open(redo_file, 'w') as f:
+                    json.dump({'selected_carriers': selected}, f)
+
+        # Sync merchant pricing excluded carriers
         pricing_file = job_dir / 'merchant_pricing.json'
         if pricing_file.exists():
             with open(pricing_file, 'r') as f:
                 merchant_pricing = json.load(f)
+            excluded = merchant_pricing.get('excluded_carriers', [])
+            changed = False
+            if eligibility['amazon_eligible_final'] and 'Amazon' in excluded:
+                excluded = [c for c in excluded if c != 'Amazon']
+                changed = True
+            if eligibility['uniuni_eligible_final'] and 'UniUni' in excluded:
+                excluded = [c for c in excluded if c != 'UniUni']
+                changed = True
+            if not eligibility['amazon_eligible_final'] and 'Amazon' not in excluded:
+                excluded.append('Amazon')
+                changed = True
+            if not eligibility['uniuni_eligible_final'] and 'UniUni' not in excluded:
+                excluded.append('UniUni')
+                changed = True
+            if changed:
+                merchant_pricing['excluded_carriers'] = excluded
+                with open(pricing_file, 'w') as f:
+                    json.dump(merchant_pricing, f)
 
-        generate_rate_card(job_dir, mapping_config, merchant_pricing)
-
+        # Clear dashboard caches so they recalculate with new annual orders
         summary_cache = _summary_cache_path(job_dir)
         breakdown_cache = _cache_path_for_job(job_dir)
         carrier_details_cache = _carrier_details_cache_path(job_dir)
@@ -5987,14 +6029,31 @@ def update_annual_orders(job_id):
             breakdown_cache.unlink()
         if carrier_details_cache.exists():
             carrier_details_cache.unlink()
+        
+        # Clear in-memory job caches
+        job_prefix = f"{job_dir.name}:"
+        with summary_jobs_lock:
+            for key in list(summary_jobs.keys()):
+                if key.startswith(job_prefix):
+                    summary_jobs.pop(key, None)
+        with dashboard_jobs_lock:
+            for key in list(dashboard_jobs.keys()):
+                if key.startswith(job_prefix):
+                    dashboard_jobs.pop(key, None)
 
-        return jsonify({'success': True})
+        # Return success with updated eligibility so frontend can refresh UI
+        return jsonify({
+            'success': True,
+            'eligibility': eligibility,
+            'amazon_eligible': eligibility['amazon_eligible_final'],
+            'uniuni_eligible': eligibility['uniuni_eligible_final']
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/usps-market-discount/<job_id>', methods=['POST'])
 def update_usps_market_discount(job_id):
-    """Update USPS Market discount settings and regenerate rate card."""
+    """Update USPS Market discount settings and clear cache (fast, no Excel regeneration)."""
     try:
         job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
         if not job_dir.exists():
@@ -6022,14 +6081,7 @@ def update_usps_market_discount(job_id):
         with open(mapping_file, 'w') as f:
             json.dump(mapping_config, f)
 
-        merchant_pricing = {'excluded_carriers': [], 'included_services': []}
-        pricing_file = job_dir / 'merchant_pricing.json'
-        if pricing_file.exists():
-            with open(pricing_file, 'r') as f:
-                merchant_pricing = json.load(f)
-
-        generate_rate_card(job_dir, mapping_config, merchant_pricing)
-
+        # Clear dashboard caches so they recalculate with new discounts
         summary_cache = _summary_cache_path(job_dir)
         breakdown_cache = _cache_path_for_job(job_dir)
         carrier_details_cache = _carrier_details_cache_path(job_dir)
