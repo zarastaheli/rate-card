@@ -73,12 +73,23 @@
 
   <script>
     function renderProgress(progress = {}) {
-      ["normalize", "write_template", "finalize"].forEach((key) => {
-        const step = document.querySelector(`.loading-step[data-step="${key}"]`);
+      ["normalize", "write_template", "saving"].forEach((key) => {
+        const step = document.querySelector(`.loading-step[data-step="${key === 'saving' ? 'finalize' : key}"]`);
         if (!step) return;
-        const icon = step.querySelector(".loading-step-icon");
-        const done = Boolean(progress[key]);
+        
+        const labelEl = step.querySelector(".loading-step-label");
+        const val = progress[key];
+        
+        if (typeof val === 'string' && key === 'write_template') {
+           labelEl.textContent = `Writing Data (${val})`;
+        } else {
+           // Reset to original label if it was a string
+           if (key === 'write_template') labelEl.textContent = "Write Into the Template";
+        }
+
+        const done = val === true;
         step.classList.toggle("is-complete", done);
+        const icon = step.querySelector(".loading-step-icon");
         if (icon) {
           icon.classList.toggle("is-complete", done);
         }
