@@ -487,9 +487,9 @@ def test_redo_carrier_use_in_pricing_written(client, zone_based_csv):
         assert find_value('USPS Market') == 'No'
         assert find_value('UPS Ground Saver') == 'No'
         assert find_value('UPS Ground') == 'No'
-        assert find_value('DHL') == 'Yes'
         assert find_value('Amazon') == 'Yes'
         assert find_value('FedEx') == 'No'
+        assert find_value('DHL') is None
 
         wb.close()
     finally:
@@ -576,10 +576,10 @@ def test_pricing_summary_overwrite_use_in_pricing(client, zone_based_csv):
         assert find_redo('USPS Market') == 'No'
         assert find_redo('UPS Ground Saver') == 'No'
         assert find_redo('UPS Ground') == 'No'
-        assert find_redo('DHL') == 'Yes'
         assert find_redo('FedEx') == 'No'
         assert find_redo('Amazon') == 'No'
-        assert find_redo('First Mile') == 'No'
+        assert find_redo('DHL') is None
+        assert find_redo('First Mile') is None
 
         header_row_idx, label_col, use_col = None, None, None
         for row in ws.iter_rows():
@@ -741,9 +741,8 @@ def test_redo_carrier_detection_defaults(client, redo_carrier_csv):
             "USPS Market",
             "UPS Ground",
             "UPS Ground Saver",
-            "FedEx",
             "Amazon",
-            "DHL"
+            "FedEx"
         }
         assert detected == expected
 

@@ -182,8 +182,7 @@ REDO_CARRIERS = [
     "UPS Ground",
     "UPS Ground Saver",
     "FedEx",
-    "Amazon",
-    "DHL"
+    "Amazon"
 ]
 
 REDO_FORCED_ON = [
@@ -899,8 +898,6 @@ def infer_redo_carrier(carrier_value, service_value):
         return 'FedEx'
     if 'AMAZON' in text:
         return 'Amazon'
-    if 'DHL' in text:
-        return 'DHL'
     return None
 
 def extract_invoice_services(raw_df, mapping_config):
@@ -3238,17 +3235,6 @@ def update_pricing_summary_redo_carriers(ws, selected_redo_carriers):
         target_cell.value = 'Yes' if canonical in selected else 'No'
         last_row = row_idx
 
-    missing_carriers = [c for c in REDO_CARRIERS if c not in seen]
-    for carrier in missing_carriers:
-        insert_row = last_row + 1
-        ws.cell(insert_row, label_col, carrier)
-        ws.cell(insert_row, use_col, 'Yes' if carrier in selected else 'No')
-        last_row = insert_row
-
-    if 'First Mile' not in seen:
-        insert_row = last_row + 1
-        ws.cell(insert_row, label_col, 'First Mile')
-        ws.cell(insert_row, use_col, 'Yes' if 'First Mile' in selected else 'No')
 
 def update_pricing_summary_merchant_carriers(ws, excluded_carriers):
     """Update Use in Pricing for Merchant Carriers section."""
