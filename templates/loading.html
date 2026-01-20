@@ -139,24 +139,11 @@
     async function startGeneration() {
       const token = "{{ token }}";
       try {
-        const res = await fetch('/api/generate', {
+        await fetch('/api/generate', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ job_id: token })
         });
-        const data = await res.json();
-        
-        // If dashboard is ready, redirect immediately (no waiting for Excel)
-        if (data.redirect) {
-          if (countdownInterval) clearInterval(countdownInterval);
-          window.location = data.redirect;
-          return;
-        }
-        
-        if (data.error) {
-          showError(data.error);
-          return;
-        }
       } catch (e) {
         showError('Error starting generation.');
       }
@@ -165,6 +152,7 @@
     document.addEventListener("DOMContentLoaded", () => {
       startCountdown();
       startGeneration();
+      pollStatus();
     });
   </script>
 </body>

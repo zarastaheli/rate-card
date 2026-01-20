@@ -2866,7 +2866,7 @@ def _read_metrics_from_excel_cells(rate_card_path):
         return {}
 
 def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=None):
-    """Pre-compute dashboard metrics using pure Python calculations from normalized CSV."""
+    """Pre-compute dashboard metrics using pure Python calculations."""
     job_dir = Path(job_dir)
     
     # Check that normalized CSV exists (required for calculations)
@@ -2875,6 +2875,8 @@ def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=
         app.logger.error("No normalized.csv found for precompute")
         return False
     
+    # Use rate card file for hash if it exists
+    rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
     full_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
     selected_redo = redo_config.get('selected_carriers', [])
     selected_dashboard = _dashboard_selected_from_redo(selected_redo)
@@ -5176,7 +5178,7 @@ def redo_carriers(job_id):
 
 @app.route('/api/generate', methods=['POST'])
 def generate():
-    """Start rate card generation - computes dashboard instantly, Excel in background"""
+    """Start rate card generation - generates Excel synchronously for accurate calculations"""
     try:
         data = request.json
         job_id = data.get('job_id')
@@ -5198,46 +5200,37 @@ def generate():
             with open(pricing_file, 'r') as f:
                 merchant_pricing = json.load(f)
         
-        # Initialize progress - mark dashboard as ready immediately
+        # Initialize progress
         progress_file = job_dir / 'progress.json'
+        normalized_csv = job_dir / 'normalized.csv'
+        estimated_seconds = 30
+        if normalized_csv.exists():
+            try:
+                with open(normalized_csv, newline='') as f:
+                    rows = sum(1 for _ in f) - 1
+                rows = max(rows, 0)
+                estimated_seconds = max(10, min(60, int(rows * 0.03)))
+            except Exception:
+                pass
+
         progress_payload = {
             'started_at': datetime.now(timezone.utc).isoformat(),
-            'normalize': True,
-            'dashboard_ready': True,
-            'excel_generating': True
+            'eta_seconds': estimated_seconds
         }
         with open(progress_file, 'w') as f:
             json.dump(progress_payload, f)
         
-        # Load redo carriers config
-        redo_config = {}
-        redo_file = job_dir / 'redo_carriers.json'
-        if redo_file.exists():
-            with open(redo_file, 'r') as f:
-                redo_config = json.load(f)
-        
-        # Pre-compute dashboard metrics SYNCHRONOUSLY (fast ~0.2 seconds)
-        try:
-            _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
-        except Exception as e:
-            app.logger.warning(f"Dashboard precompute failed: {e}")
-        
-        # Generate Excel file in background thread (slow ~45 seconds)
-        def run_excel_generation():
+        # Generate Excel and dashboard metrics in background thread
+        def run_generation():
             try:
                 generate_rate_card(job_dir, mapping_config, merchant_pricing)
             except Exception as e:
-                write_error(job_dir, f'Excel generation failed: {str(e)}')
+                write_error(job_dir, f'Generation failed: {str(e)}')
 
-        thread = threading.Thread(target=run_excel_generation, daemon=True)
+        thread = threading.Thread(target=run_generation, daemon=True)
         thread.start()
         
-        # Return immediately - dashboard is ready, Excel generating in background
-        return jsonify({
-            'success': True, 
-            'status': 'dashboard_ready',
-            'redirect': f'/dashboard?job_id={job_id}'
-        })
+        return jsonify({'success': True, 'status': 'started'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -5689,21 +5682,13 @@ def dashboard_data(job_id):
         annual_orders_missing = _annual_orders_missing(mapping_config)
         pct_off, dollar_off = _usps_market_discount_values(mapping_config)
         
-        # Check if Excel file exists (may be generating in background)
+        # Require rate card Excel file for accurate calculations
         rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
-        excel_ready = len(rate_card_files) > 0
-        
-        # Check for pre-computed dashboard cache (available even without Excel)
-        cache = _read_dashboard_cache(job_dir)
-        if not cache.get('ready') and not excel_ready:
-            # Neither cache nor Excel exists - try to compute now
-            try:
-                _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
-                cache = _read_dashboard_cache(job_dir)
-            except Exception as e:
-                return jsonify({'error': 'Dashboard data not available yet', 'excel_generating': True}), 202
+        if not rate_card_files:
+            return jsonify({'error': 'Rate card not found'}), 404
         
         current_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
+        cache = _read_dashboard_cache(job_dir)
         
         refresh = request.args.get('refresh') == '1'
         if refresh:
@@ -5748,17 +5733,13 @@ def dashboard_data(job_id):
         )
         carrier_percentages = _carrier_distribution(job_dir, mapping_config, available_carriers)
         
-        # Re-read cache if needed (may have been read earlier for initial check)
-        if not cache.get('ready'):
-            cache = _read_dashboard_cache(job_dir)
-        
         # Only check rate card file hash (first part) for cache validity
         cached_hash = cache.get('source_hash', '')
         cached_file_hash = cached_hash.split(':')[0] if cached_hash else ''
         current_file_hash = current_hash.split(':')[0] if current_hash else ''
         cache_valid = cache.get('ready') and cached_file_hash == current_file_hash
         
-        if not cache_valid and excel_ready:
+        if not cache_valid:
             _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
             cache = _read_dashboard_cache(job_dir)
         
@@ -5786,8 +5767,7 @@ def dashboard_data(job_id):
                 'usps_market_pct_off': pct_off,
                 'usps_market_dollar_off': dollar_off,
                 'carrier_percentages': carrier_percentages,
-                'per_carrier_total': len(selected_dashboard or available_carriers),
-                'excel_ready': excel_ready
+                'per_carrier_total': len(selected_dashboard or available_carriers)
             })
         
         selection_key = _selection_cache_key(selected_dashboard)
@@ -5814,8 +5794,7 @@ def dashboard_data(job_id):
             'show_usps_market_discount': show_usps_market_discount,
             'usps_market_pct_off': pct_off,
             'usps_market_dollar_off': dollar_off,
-            'carrier_percentages': carrier_percentages,
-            'excel_ready': excel_ready
+            'carrier_percentages': carrier_percentages
         })
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 500
