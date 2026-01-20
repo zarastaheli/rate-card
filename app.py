@@ -182,7 +182,8 @@ REDO_CARRIERS = [
     "UPS Ground",
     "UPS Ground Saver",
     "FedEx",
-    "Amazon"
+    "Amazon",
+    "DHL"
 ]
 
 REDO_FORCED_ON = [
@@ -203,6 +204,16 @@ USPS_ZONE_CACHE_PATH = os.environ.get('USPS_ZONE_CACHE_PATH') or str(
 USPS_ZONE_CSV_PATH = os.environ.get('USPS_ZONE_CSV_PATH') or str(
     Path(__file__).resolve().parent / 'zip_code_zones_new.csv'
 )
+
+PROGRESS_PHASE_SEQUENCE = ['normalize', 'qualification', 'write_template', 'saving']
+DEFAULT_PHASE_ESTIMATES = {
+    'normalize': 3.0,
+    'qualification': 2.0,
+    'write_template': 25.0,
+    'saving': 6.0
+}
+_PROGRESS_STATS_FILE = Path(app.config['UPLOAD_FOLDER']) / '.progress_stats.json'
+_PROGRESS_STATS_LOCK = threading.Lock()
 USPS_ZONE_CSV_LOADED = False
 
 MANUAL_ZONE_TABLE_604 = """
@@ -888,6 +899,8 @@ def infer_redo_carrier(carrier_value, service_value):
         return 'FedEx'
     if 'AMAZON' in text:
         return 'Amazon'
+    if 'DHL' in text:
+        return 'DHL'
     return None
 
 def extract_invoice_services(raw_df, mapping_config):
@@ -3225,6 +3238,13 @@ def update_pricing_summary_redo_carriers(ws, selected_redo_carriers):
         target_cell.value = 'Yes' if canonical in selected else 'No'
         last_row = row_idx
 
+    missing_carriers = [c for c in REDO_CARRIERS if c not in seen]
+    for carrier in missing_carriers:
+        insert_row = last_row + 1
+        ws.cell(insert_row, label_col, carrier)
+        ws.cell(insert_row, use_col, 'Yes' if carrier in selected else 'No')
+        last_row = insert_row
+
     if 'First Mile' not in seen:
         insert_row = last_row + 1
         ws.cell(insert_row, label_col, 'First Mile')
@@ -5416,10 +5436,7 @@ def redo_carriers(job_id):
                 with open(redo_file, 'r') as f:
                     saved_redo = json.load(f)
                 rs = saved_redo.get('selected_carriers', [])
-                # Scrub DHL from any legacy selections
-                if 'DHL' in rs:
-                    rs = [c for c in rs if c != 'DHL']
-                changed = 'DHL' in saved_redo.get('selected_carriers', [])
+                changed = False
                 if eligibility['amazon_eligible_final'] and 'Amazon' not in rs:
                     rs.append('Amazon')
                     changed = True
@@ -5543,6 +5560,131 @@ def write_progress(job_dir, step, value=True):
     progress['phase_timestamps'][step] = datetime.now(timezone.utc).isoformat()
     with open(progress_file, 'w') as f:
         json.dump(progress, f)
+
+def _load_progress_stats():
+    """Load historical phase timings to estimate ETA."""
+    stats = {'phases': {}}
+    try:
+        with _PROGRESS_STATS_LOCK:
+            if _PROGRESS_STATS_FILE.exists():
+                with open(_PROGRESS_STATS_FILE, 'r') as f:
+                    stats = json.load(f)
+    except Exception:
+        stats = {'phases': {}}
+    if 'phases' not in stats:
+        stats['phases'] = {}
+    return stats
+
+def _write_progress_stats(stats):
+    """Persist updated timing stats."""
+    stats.setdefault('phases', {})
+    stats['last_updated'] = datetime.now(timezone.utc).isoformat()
+    with _PROGRESS_STATS_LOCK:
+        with open(_PROGRESS_STATS_FILE, 'w') as f:
+            json.dump(stats, f)
+
+def _compute_phase_durations(timestamps):
+    """Compute durations between generator phases."""
+    durations = {}
+    base_ts = timestamps.get('generation_start')
+    if not base_ts and timestamps:
+        base_ts = min(timestamps.values())
+    if not base_ts:
+        return durations
+    try:
+        prev_time = datetime.fromisoformat(base_ts)
+    except Exception:
+        return durations
+
+    for phase in PROGRESS_PHASE_SEQUENCE:
+        phase_ts = timestamps.get(phase)
+        if not phase_ts:
+            break
+        try:
+            current_time = datetime.fromisoformat(phase_ts)
+        except Exception:
+            break
+        durations[phase] = max(0.0, (current_time - prev_time).total_seconds())
+        prev_time = current_time
+    return durations
+
+def _record_progress_stats(job_dir):
+    """Capture finished phase durations for future ETA estimates."""
+    progress_file = job_dir / 'progress.json'
+    if not progress_file.exists():
+        return
+    try:
+        with open(progress_file, 'r') as f:
+            progress = json.load(f)
+    except Exception:
+        return
+    timestamps = progress.get('phase_timestamps', {})
+    durations = _compute_phase_durations(timestamps)
+    if not durations:
+        return
+    stats = _load_progress_stats()
+    phases_data = stats.setdefault('phases', {})
+    for phase, duration in durations.items():
+        entry = phases_data.setdefault(phase, {'count': 0, 'total_seconds': 0.0})
+        entry['count'] += 1
+        entry['total_seconds'] += duration
+    _write_progress_stats(stats)
+
+def _phase_estimates_from_stats(stats):
+    """Translate stored stats into per-phase averages."""
+    estimates = {}
+    phases_data = stats.get('phases', {})
+    for phase in PROGRESS_PHASE_SEQUENCE:
+        entry = phases_data.get(phase, {})
+        count = entry.get('count', 0)
+        total = entry.get('total_seconds', 0.0)
+        if count > 0:
+            estimates[phase] = total / count
+        else:
+            estimates[phase] = DEFAULT_PHASE_ESTIMATES.get(phase, 5.0)
+    return estimates
+
+def _estimate_eta_from_stats(progress):
+    """Estimate remaining seconds using historical phase averages."""
+    stats = _load_progress_stats()
+    estimates = _phase_estimates_from_stats(stats)
+    total_estimate = sum(estimates.values())
+    if total_estimate <= 0:
+        return None
+    started_at = progress.get('started_at')
+    if not started_at:
+        return round(total_estimate)
+    try:
+        started_dt = datetime.fromisoformat(started_at)
+    except Exception:
+        return round(total_estimate)
+    elapsed = (datetime.now(timezone.utc) - started_dt).total_seconds()
+    remaining = max(0.0, total_estimate - elapsed)
+    return int(round(remaining))
+
+def _estimate_eta_from_progress(progress):
+    """Fallback ETA based on earlier row-based heuristic."""
+    eta_total = progress.get('eta_seconds')
+    if eta_total is None:
+        return None
+    started_at = progress.get('started_at')
+    if started_at:
+        try:
+            started_dt = datetime.fromisoformat(started_at)
+            elapsed = (datetime.now(timezone.utc) - started_dt).total_seconds()
+            return max(0, int(round(eta_total - elapsed)))
+        except Exception:
+            pass
+    return int(round(eta_total))
+
+def _calculate_eta(progress):
+    eta = _estimate_eta_from_stats(progress)
+    if eta is not None:
+        return eta, 'history'
+    fallback = _estimate_eta_from_progress(progress)
+    if fallback is not None:
+        return fallback, 'row_estimate'
+    return None, None
 
 def write_error(job_dir, message):
     """Write error to progress file."""
@@ -5827,8 +5969,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     except Exception:
         pass
 
-    # Mark Excel generation complete
+    # Mark Excel generation complete and record timings
     write_progress(job_dir, 'excel_complete', True)
+    _record_progress_stats(job_dir)
     
     logging.info(f"Total generation time: {time.time() - gen_start:.1f}s")
     return output_path
@@ -5876,15 +6019,14 @@ def status(job_id=None):
             'progress': progress
         })
     
-    eta_remaining = None
     elapsed_seconds = None
-    if progress.get('started_at') and progress.get('eta_seconds'):
+    if progress.get('started_at'):
         try:
             started_at = datetime.fromisoformat(progress['started_at'])
             elapsed_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
-            eta_remaining = max(0, int(progress['eta_seconds'] - elapsed_seconds))
         except Exception:
-            eta_remaining = None
+            elapsed_seconds = None
+    eta_remaining, eta_source = _calculate_eta(progress)
 
     phase_timestamps = progress.get('phase_timestamps', {})
     phase_durations = {}
@@ -5905,14 +6047,17 @@ def status(job_id=None):
         except Exception:
             pass
 
-    return jsonify({
+    response = {
         'ready': False,
         'progress': progress,
         'eta_seconds_remaining': eta_remaining,
-        'elapsed_seconds': round(elapsed_seconds, 2) if elapsed_seconds else None,
+        'elapsed_seconds': round(elapsed_seconds, 2) if elapsed_seconds is not None else None,
         'phase_timestamps': phase_timestamps,
         'phase_durations': phase_durations
-    })
+    }
+    if eta_source:
+        response['eta_source'] = eta_source
+    return jsonify(response)
 
 @app.route('/api/dashboard/<job_id>', methods=['GET', 'POST'])
 def dashboard_data(job_id):

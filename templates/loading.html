@@ -97,6 +97,7 @@
     }
 
     function showError(message) {
+      stopCountdown();
       const spinner = document.querySelector('.spinner');
       const errorEl = document.querySelector('.loading-error');
       if (spinner) spinner.style.display = 'none';
@@ -106,22 +107,42 @@
       }
     }
 
-    let countdownSeconds = 45;
+    let countdownSeconds = null;
     let countdownInterval = null;
 
     function updateEtaDisplay() {
       const etaEl = document.getElementById('eta-remaining');
-      if (etaEl) {
+      if (!etaEl) return;
+      if (countdownSeconds === null) {
+        etaEl.textContent = 'Calculating…';
+      } else {
         etaEl.textContent = `${Math.max(1, Math.round(countdownSeconds))}s`;
       }
     }
 
-    function startCountdown() {
-      updateEtaDisplay();
+    function startCountdownLoop() {
+      if (countdownInterval) return;
       countdownInterval = setInterval(() => {
-        countdownSeconds = Math.max(1, countdownSeconds - 1);
-        updateEtaDisplay();
+        if (countdownSeconds === null) return;
+        if (countdownSeconds > 0) {
+          countdownSeconds = Math.max(0, countdownSeconds - 1);
+          updateEtaDisplay();
+        }
       }, 1000);
+    }
+
+    function updateEta(seconds) {
+      if (typeof seconds !== 'number' || Number.isNaN(seconds)) return;
+      countdownSeconds = Math.max(0, seconds);
+      updateEtaDisplay();
+      startCountdownLoop();
+    }
+
+    function stopCountdown() {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+      }
     }
 
     async function pollStatus() {
@@ -135,15 +156,19 @@
         }
 
         if (data.error) {
-          if (countdownInterval) clearInterval(countdownInterval);
+          stopCountdown();
           showError(data.error);
           return;
         }
 
         if (data.ready) {
-          if (countdownInterval) clearInterval(countdownInterval);
+          stopCountdown();
           window.location = data.redirect_url;
           return;
+        }
+
+        if (typeof data.eta_seconds_remaining === 'number') {
+          updateEta(data.eta_seconds_remaining);
         }
       } catch (e) {
         console.error(e);
@@ -166,7 +191,7 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-      startCountdown();
+      updateEtaDisplay();
       startGeneration();
       pollStatus();
     });
