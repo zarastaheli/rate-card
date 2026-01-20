@@ -5275,6 +5275,7 @@ def redo_carriers(job_id):
             mapping_config.get('annual_orders'),
             mapping_config=mapping_config
         )
+        app.logger.info(f"Redo carriers eligibility check - annual_orders={mapping_config.get('annual_orders')}, amazon_eligible={eligibility['amazon_eligible_final']}, uniuni_eligible={eligibility['uniuni_eligible_final']}, amazon_volume_avg={eligibility.get('amazon_volume_avg')}")
 
         if request.method == 'POST':
             data = request.json or {}
@@ -5341,6 +5342,7 @@ def redo_carriers(job_id):
 
         # Filter out any invalid carriers from selected
         selected = [c for c in selected if c in REDO_CARRIERS]
+        app.logger.info(f"Redo carriers response - available={available}, selected={selected}")
 
         return jsonify({
             'detected_carriers': available,
@@ -5986,10 +5988,19 @@ def update_annual_orders(job_id):
         with open(mapping_file, 'r') as f:
             mapping_config = json.load(f)
         mapping_config['annual_orders'] = annual_orders_value
+        # Clear explicit eligibility overrides so volume-based calculation takes effect
+        if 'amazon_eligible' in mapping_config:
+            del mapping_config['amazon_eligible']
+        if 'uniuni_eligible' in mapping_config:
+            del mapping_config['uniuni_eligible']
+        if 'uniuni_qualified' in mapping_config:
+            del mapping_config['uniuni_qualified']
+        if 'uniuni' in mapping_config:
+            del mapping_config['uniuni']
         with open(mapping_file, 'w') as f:
             json.dump(mapping_config, f)
 
-        # Compute new eligibility based on updated annual orders
+        # Compute new eligibility based on updated annual orders (no overrides now)
         eligibility = compute_eligibility(
             mapping_config.get('origin_zip'),
             annual_orders_value,
