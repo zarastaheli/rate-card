@@ -5837,89 +5837,54 @@ def write_error(job_dir, message):
         json.dump(progress, f)
 
 def generate_rate_card(job_dir, mapping_config, merchant_pricing):
-    """Generate the rate card Excel file"""
+    """Generate the rate card Excel file - SIMPLE VERSION
+    
+    Just loads template, writes to Raw Data, toggles carriers, saves.
+    No caching, no calcChain injection, no complex modifications.
+    """
     import logging
     gen_start = time.time()
     
-    # Save output path first
     merchant_name = mapping_config.get('merchant_name', 'Merchant')
     output_filename = f"{merchant_name} - Rate Card.xlsx"
     output_path = job_dir / output_filename
     
-    # Step 1: Normalize/qualify data (keep 'normalize' for compatibility)
     write_progress(job_dir, 'normalize', True)
     write_progress(job_dir, 'qualification', True)
     
-    # Load template from cached parsed workbook (deepcopy is ~2s vs parsing at ~22s)
-    load_start = time.time()
-    wb = _get_parsed_workbook()
-    logging.info(f"Template load time: {time.time() - load_start:.1f}s")
+    # Load template DIRECTLY from file - no caching
+    template_path = Path('#New Template - Rate Card.xlsx')
+    if not template_path.exists():
+        template_path = Path('Rate Card Template.xlsx')
+    if not template_path.exists():
+        raise FileNotFoundError("Template file not found")
     
-    # Clean up corrupted tables (strings instead of Table objects) immediately after load
-    from openpyxl.worksheet.table import Table
-    for sheet in wb.worksheets:
-        corrupted_tables = [name for name, tbl in sheet.tables.items() if not isinstance(tbl, Table)]
-        for table_name in corrupted_tables:
-            try:
-                del sheet.tables[table_name]
-                logging.warning(f"Removed corrupted table '{table_name}' from sheet '{sheet.title}'")
-            except Exception:
-                pass
+    load_start = time.time()
+    wb = openpyxl.load_workbook(template_path, keep_vba=False, data_only=False)
+    logging.info(f"Template load time: {time.time() - load_start:.1f}s")
     
     if 'Raw Data' not in wb.sheetnames:
         raise ValueError("Template must contain 'Raw Data' sheet")
     ws = wb['Raw Data']
     
+    # Get header mapping
     headers = [cell.value for cell in ws[1]]
     header_to_col = {}
     for idx, header in enumerate(headers):
-        if header is None:
-            continue
-        header_str = str(header).strip()
-        if header_str:
-            header_to_col[header_str] = idx + 1
+        if header:
+            header_to_col[str(header).strip()] = idx + 1
     
+    # Load configs
     redo_config = {}
     redo_file = job_dir / 'redo_carriers.json'
     if redo_file.exists():
         with open(redo_file, 'r') as f:
             redo_config = json.load(f)
-
-    # Load normalized data
+    
     normalized_df = pd.read_csv(job_dir / 'normalized.csv')
-
-    if not normalized_df.empty:
-        debug_cols = [
-            'WEIGHT_IN_LBS',
-            'TWO_LETTER_COUNTRY_CODE',
-            'CALCULATED_TWO_LETTER_COUNTRY_CODE',
-            'FULL_COUNTRY_NAME',
-            'CLEANED_SHIPPING_SERVICE',
-            'SHIPPING_PRIORITY',
-            'PACKAGE_DIMENSION_VOLUME',
-            'PACKAGE_SIZE_STATUS',
-            'WEIGHT_CLASSIFICATION',
-            'ORIGIN_ZIP_CODE'
-        ]
-        sample = {}
-        for col in debug_cols:
-            if col in normalized_df.columns:
-                sample[col] = normalized_df.iloc[0].get(col)
-        if sample:
-            app.logger.info("Computed columns sample: %s", sample)
-    
-    # Step 2: Write into template
-    write_progress(job_dir, 'write_template', True)
-    
-    start_row = 2
     origin_zip_value = extract_origin_zip(mapping_config.get('origin_zip'))
     
-    # Pre-calculate zone fallback values if needed
-    zone_values_fallback = None
-    if 'Zone' in normalized_df.columns:
-        zone_values_fallback = normalized_df['Zone'].tolist()
-    
-    # Map standard fields to Excel columns
+    # Simple field mapping
     field_to_excel = {
         'Order Number': 'ORDER_NUMBER',
         'Order Date': 'DATE',
@@ -5937,223 +5902,73 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         'Label Cost': 'LABEL_COST',
         'Zone': 'ZONE'
     }
-
-    numeric_cols = {
-        'WEIGHT_IN_OZ', 'WEIGHT_IN_LBS', 'PACKAGE_HEIGHT', 'PACKAGE_WIDTH',
-        'PACKAGE_LENGTH', 'PACKAGE_DIMENSION_VOLUME', 'LABEL_COST'
-    }
-
-    # Get merchant pricing selections
-    excluded_carriers = merchant_pricing.get('excluded_carriers', [])
-    included_services = merchant_pricing.get('included_services', [])
-    normalized_selected = {normalize_service_name(s) for s in included_services}
-    normalized_excluded = {normalize_merchant_carrier(c) for c in excluded_carriers}
-
-    # Speed optimization: Extract data to lists first
-    column_data = {
-        field: normalized_df[field].tolist()
-        for field in field_to_excel.keys()
-        if field in normalized_df.columns
-    }
     
-    # Pre-calculate flags
-    service_series = normalized_df.get('Shipping Service')
-    if service_series is None:
-        service_series = pd.Series([""] * len(normalized_df))
-    carrier_series = normalized_df.get('Shipping Carrier')
-    if carrier_series is None:
-        carrier_series = pd.Series([""] * len(normalized_df))
-    service_norm = service_series.fillna("").astype(str).apply(normalize_service_name)
-    carrier_norm = carrier_series.fillna("").astype(str).apply(normalize_merchant_carrier)
-    carrier_allowed = ~carrier_norm.isin(normalized_excluded)
-    qualified_flags = (service_norm.isin(normalized_selected) & carrier_allowed).tolist()
-
-    write_cols = set()
-    write_fields = []
-    for std_field, excel_col in field_to_excel.items():
-        col_idx = header_to_col.get(excel_col)
-        if col_idx:
-            write_cols.add(col_idx)
-            if std_field in column_data:
-                write_fields.append((std_field, excel_col, col_idx))
-
-    # Identify formula columns (AI-AN, 1-indexed) - these have row-relative formulas
-    # in the template that should NOT be overwritten
-    formula_cols = set(range(35, 41))
-
-    # Optimize: Pre-calculate lookups
-    write_fields_prepared = []
-    for std_field, excel_col, col_idx in write_fields:
-        if col_idx not in formula_cols:
-            write_fields_prepared.append((std_field, excel_col, col_idx))
-
-    # Single pass for writing data
-    total_rows = len(normalized_df)
-
-    # Identify other columns
-    m_id = mapping_config.get('merchant_id')
-    m_col = header_to_col.get('MERCHANT_ID')
-    q_col = header_to_col.get('QUALIFIED')
-    z_col = header_to_col.get('ZONE')
-
-    # OPTIMIZATION: Pre-process all data using vectorized pandas operations
-    # This is much faster than Python loops
-    preprocess_start = time.time()
+    write_progress(job_dir, 'write_template', True)
     
-    # Pre-process date column using vectorized pandas
-    if 'Order Date' in column_data:
-        date_series = pd.Series(column_data['Order Date'])
-        date_series = pd.to_datetime(date_series, errors='coerce')
-        column_data['Order Date'] = [v.to_pydatetime() if pd.notna(v) else None for v in date_series]
-    
-    # Pre-process zip column using vectorized extraction
-    if 'Zip' in column_data:
-        zip_series = pd.Series(column_data['Zip']).fillna('').astype(str)
-        zip_extracted = zip_series.str.extract(r'(\d{5})', expand=False)
-        column_data['Zip'] = [int(v) if pd.notna(v) else None for v in zip_extracted]
-    
-    # Pre-process numeric columns using vectorized pd.to_numeric
-    for std_field, excel_col, col_idx in write_fields_prepared:
-        if excel_col in numeric_cols and std_field in column_data:
-            num_series = pd.to_numeric(pd.Series(column_data[std_field]), errors='coerce')
-            column_data[std_field] = [float(v) if pd.notna(v) else None for v in num_series]
-    
-    # Pre-process origin zip column using numpy where
-    if 'ORIGIN_ZIP_CODE' in column_data:
-        origin_series = pd.Series(column_data['ORIGIN_ZIP_CODE'])
-        column_data['ORIGIN_ZIP_CODE'] = [v if pd.notna(v) else origin_zip_value for v in origin_series]
-    
-    # Pre-process zone values using vectorized operations
-    zone_col = None
-    if zone_values_fallback is not None and z_col and z_col not in formula_cols:
-        zone_series = pd.to_numeric(pd.Series(zone_values_fallback), errors='coerce')
-        zone_col = [int(v) if pd.notna(v) else None for v in zone_series]
-    
-    logging.info(f"Data preprocessing time: {time.time() - preprocess_start:.1f}s")
-    
-    # Write data using optimized bulk assignment
+    # Write data to Raw Data sheet using simple cell() method
     write_start = time.time()
+    start_row = 2
+    total_rows = len(normalized_df)
     
-    # OPTIMIZATION: Pre-fetch all cell references in one pass, then assign values
-    # This avoids repeated dictionary lookups and cell creation overhead
-    from openpyxl.cell.cell import Cell
+    for row_idx, row_data in normalized_df.iterrows():
+        excel_row = start_row + row_idx
+        for df_field, excel_col in field_to_excel.items():
+            col_idx = header_to_col.get(excel_col)
+            if col_idx and df_field in normalized_df.columns:
+                value = row_data.get(df_field)
+                if pd.notna(value):
+                    ws.cell(row=excel_row, column=col_idx, value=value)
+        
+        # Set ORIGIN_ZIP_CODE if missing
+        origin_col = header_to_col.get('ORIGIN_ZIP_CODE')
+        if origin_col and origin_zip_value:
+            current = ws.cell(row=excel_row, column=origin_col).value
+            if not current:
+                ws.cell(row=excel_row, column=origin_col, value=origin_zip_value)
+        
+        # Set MERCHANT_ID
+        m_col = header_to_col.get('MERCHANT_ID')
+        m_id = mapping_config.get('merchant_id')
+        if m_col and m_id:
+            ws.cell(row=excel_row, column=m_col, value=m_id)
     
-    # Build a mapping of (row, col) -> value for all data at once
-    cell_updates = {}
-    
-    for std_field, excel_col, col_idx in write_fields_prepared:
-        col_values = column_data[std_field]
-        for idx, value in enumerate(col_values):
-            if value is not None:
-                cell_updates[(start_row + idx, col_idx)] = value
-    
-    # Add ZONE column data
-    if zone_col is not None and z_col:
-        for idx, zone_val in enumerate(zone_col):
-            if zone_val is not None:
-                cell_updates[(start_row + idx, z_col)] = zone_val
-    
-    # Add MERCHANT_ID column data  
-    if m_id and m_col and m_col not in formula_cols:
-        for idx in range(total_rows):
-            cell_updates[(start_row + idx, m_col)] = m_id
-    
-    # Add QUALIFIED column data
-    if q_col and q_col not in formula_cols:
-        for idx, is_qualified in enumerate(qualified_flags):
-            cell_updates[(start_row + idx, q_col)] = is_qualified
-    
-    # Bulk write all cells - use direct _cells access for speed
-    # This bypasses the cell() method overhead
-    cells_dict = ws._cells
-    for (row, col), value in cell_updates.items():
-        if (row, col) in cells_dict:
-            cells_dict[(row, col)].value = value
-        else:
-            cell = Cell(ws, row=row, column=col, value=value)
-            cells_dict[(row, col)] = cell
-
     logging.info(f"Data write time: {time.time() - write_start:.1f}s for {total_rows} rows")
-    # Note: Formula columns (AI-AN) are preserved from template with proper row-relative references
-
-    # Update Pricing & Summary redo carrier selections
+    
+    # Update Pricing & Summary - just toggle Yes/No for carriers
     if 'Pricing & Summary' in wb.sheetnames:
         selected_redo = redo_config.get('selected_carriers', [])
         selected_services = merchant_pricing.get('included_services', [])
         excluded_carriers = merchant_pricing.get('excluded_carriers', [])
         summary_ws = wb['Pricing & Summary']
-        # Populate Annual Orders to avoid blank Deal Info calculations.
+        
+        # Set annual orders
         annual_orders_value = mapping_config.get('annual_orders')
         try:
-            annual_orders_value = int(float(annual_orders_value)) if annual_orders_value else None
+            annual_orders_value = int(float(annual_orders_value)) if annual_orders_value else 13968
         except Exception:
-            annual_orders_value = None
-        summary_ws['C9'] = annual_orders_value if annual_orders_value is not None else 13968
-        if origin_zip_value is not None:
+            annual_orders_value = 13968
+        summary_ws['C9'] = annual_orders_value
+        
+        if origin_zip_value:
             summary_ws['C29'] = origin_zip_value
+        
         pct_off, dollar_off = _usps_market_discount_values(mapping_config)
         summary_ws['C19'] = pct_off
         summary_ws['C20'] = dollar_off
+        
+        # Toggle carrier Yes/No
         update_pricing_summary_redo_carriers(summary_ws, selected_redo)
         update_pricing_summary_merchant_carriers(summary_ws, excluded_carriers)
-        update_pricing_summary_merchant_service_levels(
-            summary_ws, selected_services, normalized_df
-        )
-
-    # Step 3: Save and finalize
+        update_pricing_summary_merchant_service_levels(summary_ws, selected_services, normalized_df)
+    
+    # Save - simple, no modifications
     write_progress(job_dir, 'saving', True)
-    # Force Excel to recalculate all formulas when file is opened
-    # openpyxl strips calcChain.xml when saving, so we need these flags to force recalc
-    wb.calculation.calcMode = "auto"
-    wb.calculation.fullCalcOnLoad = True
-    wb.calculation.forceFullCalc = True  # Forces complete recalculation rebuild
-    wb.calculation.calcOnSave = False    # Don't try to calculate on save (openpyxl can't)
-    
-    # Clean up corrupted tables (strings instead of Table objects) before saving
-    from openpyxl.worksheet.table import Table
-    for ws in wb.worksheets:
-        corrupted_tables = [name for name, tbl in ws.tables.items() if not isinstance(tbl, Table)]
-        for table_name in corrupted_tables:
-            try:
-                del ws.tables[table_name]
-                logging.warning(f"Removed corrupted table '{table_name}' from sheet '{ws.title}'")
-            except Exception:
-                pass
-    
-    # Save the workbook atomically
-    temp_file = None
     save_start = time.time()
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, dir=job_dir, suffix='.xlsx') as tmp:
-            temp_file = Path(tmp.name)
-        wb.save(temp_file)
-        logging.info(f"Workbook save time: {time.time() - save_start:.1f}s")
-        if not zipfile.is_zipfile(temp_file):
-            raise Exception("Generated file is not a valid XLSX archive")
-        
-        # Inject calcChain.xml from template - openpyxl strips it but Excel needs it
-        # to know which cells to recalculate
-        try:
-            tpl_path = Path('#New Template - Rate Card.xlsx')
-            if not tpl_path.exists():
-                tpl_path = Path('Rate Card Template.xlsx')
-            _inject_calc_chain(temp_file, tpl_path)
-            logging.info("calcChain.xml injected from template")
-        except Exception as calc_err:
-            logging.warning(f"Failed to inject calcChain: {calc_err}")
-        
-        os.replace(temp_file, output_path)
-    except Exception as e:
-        if temp_file and temp_file.exists():
-            try:
-                temp_file.unlink()
-            except Exception:
-                pass
-        raise Exception(f"Failed to save Excel file: {str(e)}")
-    finally:
-        wb.close()
+    wb.save(output_path)
+    wb.close()
+    logging.info(f"Workbook save time: {time.time() - save_start:.1f}s")
     
-    # Pre-compute dashboard metrics and save to JSON cache (fast, no Excel re-load needed)
+    # Pre-compute dashboard metrics
     try:
         _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
     except Exception as e:
@@ -6163,12 +5978,10 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         log_admin_entry(job_dir.name, mapping_config, merchant_pricing, redo_config)
     except Exception:
         pass
-
-    # Mark Excel generation complete and record timings
+    
     write_progress(job_dir, 'excel_complete', True)
     _record_progress_stats(job_dir)
     
-    # Mark Excel as ready for download
     excel_ready_marker = job_dir / '.excel_ready'
     excel_ready_marker.touch()
     
