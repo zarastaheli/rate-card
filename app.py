@@ -5943,13 +5943,14 @@ def dashboard_data(job_id):
             return jsonify({'error': 'Rate card not found'}), 404
         
         current_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
-        cache = _read_dashboard_cache(job_dir)
         
         refresh = request.args.get('refresh') == '1'
         if refresh:
             for cache_file in [_summary_cache_path(job_dir), _cache_path_for_job(job_dir), _carrier_details_cache_path(job_dir)]:
                 if cache_file.exists():
                     cache_file.unlink()
+        
+        cache = _read_dashboard_cache(job_dir)
         
         eligibility = None
         if mapping_config:
