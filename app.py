@@ -6665,7 +6665,9 @@ def deal_sizing_data(job_id):
         avg_label_cost = _avg_label_cost_from_job(job_dir)
         carrier_details = []
         carrier_details_pending = False
-        rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+        
+        # Try to get carrier details from real Excel file first (filter out placeholders)
+        rate_card_files = [f for f in job_dir.glob('* - Rate Card*.xlsx') if '(Generating)' not in f.name]
         if rate_card_files:
             try:
                 source_mtime = int(rate_card_files[0].stat().st_mtime)
@@ -6684,6 +6686,24 @@ def deal_sizing_data(job_id):
             if not isinstance(detail_map, dict):
                 detail_map = {}
             carrier_details = list(detail_map.values())
+        
+        # Fallback: use dashboard breakdown cache if no real Excel yet (fast mode)
+        if not carrier_details:
+            cache = _read_dashboard_cache(job_dir)
+            breakdown = cache.get('breakdown', {})
+            if breakdown:
+                for carrier in selected_carriers:
+                    metrics = breakdown.get(carrier, {})
+                    spread = _parse_number(metrics.get('Spread Available'))
+                    orders_pct = _parse_number(metrics.get('% Orders Won W/ Spread'))
+                    if orders_pct > 1:
+                        orders_pct /= 100
+                    carrier_details.append({
+                        'carrier': carrier,
+                        'spread': spread,
+                        'orders_won_pct': orders_pct
+                    })
+        
         return jsonify({
             'annual_orders': annual_orders,
             'avg_label_cost': avg_label_cost,

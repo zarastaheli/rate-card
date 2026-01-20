@@ -47,7 +47,7 @@
         <div class="spinner"></div>
 
         <h1 class="loading-title">Generating Your Rate Card</h1>
-        <p class="loading-subtitle">Estimated Time Remaining: <span id="eta-remaining">5s</span></p>
+        <p class="loading-subtitle">Estimated Time Remaining: <span id="eta-remaining">60s</span></p>
 
         <ul class="loading-steps">
           <li class="loading-step" data-step="normalize">
@@ -107,23 +107,19 @@
       }
     }
 
-    let countdownSeconds = null;
+    let countdownSeconds = 60;
     let countdownInterval = null;
 
     function updateEtaDisplay() {
       const etaEl = document.getElementById('eta-remaining');
       if (!etaEl) return;
-      if (countdownSeconds === null) {
-        etaEl.textContent = 'Calculating…';
-      } else {
-        etaEl.textContent = `${Math.max(1, Math.round(countdownSeconds))}s`;
-      }
+      etaEl.textContent = `${Math.max(1, Math.round(countdownSeconds))}s`;
     }
 
     function startCountdownLoop() {
       if (countdownInterval) return;
+      updateEtaDisplay();
       countdownInterval = setInterval(() => {
-        if (countdownSeconds === null) return;
         if (countdownSeconds > 0) {
           countdownSeconds = Math.max(0, countdownSeconds - 1);
           updateEtaDisplay();
@@ -132,10 +128,7 @@
     }
 
     function updateEta(seconds) {
-      if (typeof seconds !== 'number' || Number.isNaN(seconds)) return;
-      countdownSeconds = Math.max(0, seconds);
-      updateEtaDisplay();
-      startCountdownLoop();
+      // Ignore server estimates, always use fixed 60s countdown
     }
 
     function stopCountdown() {
@@ -204,7 +197,7 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-      updateEtaDisplay();
+      startCountdownLoop();
       startGeneration();
     });
   </script>
