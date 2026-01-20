@@ -11,6 +11,7 @@ import urllib.request
 import urllib.parse
 import hashlib
 import requests
+import copy
 from io import BytesIO
 import tempfile
 import threading
@@ -43,9 +44,9 @@ carrier_details_jobs_lock = threading.Lock()
 # Template caching - load once at startup to avoid 25s load time per generation
 _template_cache = {}
 _template_cache_lock = threading.Lock()
-# Pre-parsed workbook cache for fast generation
-_parsed_template_cache = {}
-_parsed_template_cache_lock = threading.Lock()
+# Pre-parsed workbook cache for fast generation - stores actual parsed workbook
+_parsed_workbook_cache = {}
+_parsed_workbook_cache_lock = threading.Lock()
 
 # Rate tables cache - avoid re-parsing Excel on every dashboard call
 _rate_tables_cache = {}
@@ -79,13 +80,13 @@ def _get_cached_template():
         }
         return BytesIO(template_bytes)
 
-def _get_parsed_template():
+def _get_parsed_workbook():
     """Get a pre-parsed template workbook for fast generation.
     
-    Returns a fresh workbook loaded from cached bytes each time.
-    This is faster than loading from disk but still requires parsing.
+    Caches the parsed workbook and returns a deep copy for each call.
+    This is MUCH faster (~2s) than re-parsing the workbook each time (~24s).
     """
-    global _parsed_template_cache
+    global _parsed_workbook_cache
     template_path = Path('#New Template - Rate Card.xlsx')
     if not template_path.exists():
         template_path = Path('Rate Card Template.xlsx')
@@ -95,20 +96,28 @@ def _get_parsed_template():
     cache_key = str(template_path)
     current_mtime = template_path.stat().st_mtime
     
-    with _parsed_template_cache_lock:
-        cached = _parsed_template_cache.get(cache_key)
+    with _parsed_workbook_cache_lock:
+        cached = _parsed_workbook_cache.get(cache_key)
         if cached and cached.get('mtime') == current_mtime:
-            # Return cached bytes for fast loading
-            return BytesIO(cached['bytes'])
+            # Return deep copy of cached workbook (~2s vs 24s parsing)
+            copy_start = time.time()
+            wb_copy = copy.deepcopy(cached['workbook'])
+            logging.info(f"Workbook deepcopy time: {time.time() - copy_start:.1f}s")
+            return wb_copy
         
-        # Cache the raw bytes
-        with open(template_path, 'rb') as f:
-            template_bytes = f.read()
-        _parsed_template_cache[cache_key] = {
-            'bytes': template_bytes,
+        # Parse workbook for the first time (slow, ~24s)
+        logging.info("Parsing template workbook for cache (one-time cost)...")
+        parse_start = time.time()
+        template_buffer = _get_cached_template()
+        wb = openpyxl.load_workbook(template_buffer, keep_vba=False, data_only=False)
+        logging.info(f"Template parse time: {time.time() - parse_start:.1f}s")
+        
+        _parsed_workbook_cache[cache_key] = {
+            'workbook': wb,
             'mtime': current_mtime
         }
-        return BytesIO(template_bytes)
+        # Return a copy so the cached version stays pristine
+        return copy.deepcopy(wb)
 
 def _load_workbook_with_retry(path, attempts=3, delay=0.2, **kwargs):
     """Load a workbook with retries to avoid transient read errors."""
@@ -5824,10 +5833,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     write_progress(job_dir, 'normalize', True)
     write_progress(job_dir, 'qualification', True)
     
-    # Load template from cached BytesIO (24s vs 25s from disk)
+    # Load template from cached pre-parsed workbook (2s deepcopy vs 24s parsing)
     load_start = time.time()
-    template_buffer = _get_cached_template()
-    wb = openpyxl.load_workbook(template_buffer, keep_vba=False, data_only=False)
+    wb = _get_parsed_workbook()
     logging.info(f"Template load time: {time.time() - load_start:.1f}s")
     if 'Raw Data' not in wb.sheetnames:
         raise ValueError("Template must contain 'Raw Data' sheet")
@@ -6882,6 +6890,11 @@ def _preload_resources():
             t0 = _time.time()
             _get_pricing_controls(str(template_path))
             logging.info(f"[PRELOAD] Pricing controls loaded in {_time.time() - t0:.2f}s")
+            
+            # Pre-parse workbook for fast generation (one-time 24s cost)
+            t0 = _time.time()
+            _get_parsed_workbook()
+            logging.info(f"[PRELOAD] Workbook pre-parsed in {_time.time() - t0:.2f}s")
             
             logging.info(f"[PRELOAD] All resources preloaded in {_time.time() - preload_start:.2f}s - workers are warm")
             _resources_loaded = True
