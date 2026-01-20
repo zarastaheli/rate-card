@@ -112,6 +112,17 @@ def _get_parsed_workbook():
         wb = openpyxl.load_workbook(template_buffer, keep_vba=False, data_only=False)
         logging.info(f"Template parse time: {time.time() - parse_start:.1f}s")
         
+        # Clean up corrupted tables (strings instead of Table objects) before caching
+        from openpyxl.worksheet.table import Table
+        for sheet in wb.worksheets:
+            corrupted_tables = [name for name, tbl in sheet.tables.items() if not isinstance(tbl, Table)]
+            for table_name in corrupted_tables:
+                try:
+                    del sheet.tables[table_name]
+                    logging.warning(f"Removed corrupted table '{table_name}' from cached template sheet '{sheet.title}'")
+                except Exception:
+                    pass
+        
         _parsed_workbook_cache[cache_key] = {
             'workbook': wb,
             'mtime': current_mtime
