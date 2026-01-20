@@ -1210,7 +1210,7 @@
         upsPct += carrierPercent(detailMap[normalizeCarrierKey('UPS Ground Saver')]);
       }
       if (upsPct > 0 && Number.isFinite(avgLabel)) {
-        totalSpread += avgLabel * upsPct * effectiveOrders;
+        totalSpread += avgLabel * 0.11 * upsPct * effectiveOrders;
       }
 
       ['FedEx', 'Amazon', 'UniUni'].forEach((carrier) => {
