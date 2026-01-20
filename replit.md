@@ -97,19 +97,25 @@ The app tracks timestamps for each major processing phase to enable accurate ETA
 
 ## Carrier Eligibility
 
+### Eligibility Requirements
+Eligibility requires BOTH ZIP code whitelist AND volume thresholds:
+
 ### UniUni Eligibility
-- Orders qualify if you hit the UniUni workday minimum (currently 300 orders per workday)
-- Calculation: `annual_orders / working_days_per_year >= 300`
+- ZIP code must be in UniUni service area whitelist AND
+- Volume: >= 300 orders per workday (annual_orders / working_days_per_year)
 - Default working days per year: 260 (configurable via WORKING_DAYS_PER_YEAR env var)
+- Threshold: 78,000+ annual orders
 - Explicit overrides in mapping_config take precedence if set
 
 ### Amazon Eligibility
-- Orders qualify if you hit the Amazon daily minimum (currently 150 orders per day)
-- Calculation: `annual_orders / 365 >= 150`
+- ZIP code must be in Amazon service area whitelist AND
+- Volume: >= 150 orders per day (annual_orders / 365)
+- Threshold: 54,750+ annual orders
 - Explicit overrides in mapping_config take precedence if set
 
 ### Eligibility Sync
-- When annual orders update, Amazon/UniUni are automatically added/removed from redo carriers and merchant pricing
+- When annual orders update, explicit overrides are cleared and eligibility recalculates
+- Amazon/UniUni are automatically added/removed from redo carriers and merchant pricing
 - No DHL carrier support (removed from all carrier lists)
 
 ## Notes
