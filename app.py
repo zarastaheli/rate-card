@@ -4441,6 +4441,99 @@ def save_deal_sizing_inputs(job_id):
     except Exception:
         mapping_config = {}
     mapping_config['deal_sizing_inputs'] = payload
+    
+    # If annual_orders is provided in the payload, update mapping and recalculate eligibility
+    annual_orders = payload.get('annual_orders')
+    if annual_orders is not None:
+        annual_orders_value = _parse_numeric_value(annual_orders)
+        if annual_orders_value is not None and annual_orders_value > 0:
+            mapping_config['annual_orders'] = int(annual_orders_value)
+            # Clear explicit eligibility overrides
+            for key in ['amazon_eligible', 'uniuni_eligible', 'uniuni_qualified', 'uniuni']:
+                if key in mapping_config:
+                    del mapping_config[key]
+            
+            # Save updated mapping
+            with open(mapping_file, 'w') as f:
+                json.dump(mapping_config, f)
+            
+            # Recalculate eligibility
+            eligibility = compute_eligibility(
+                mapping_config.get('origin_zip'),
+                annual_orders_value,
+                mapping_config=mapping_config
+            )
+            app.logger.info(f"Deal sizing annual orders update - job_id={job_id}, annual_orders={annual_orders_value}, amazon_eligible={eligibility['amazon_eligible_final']}, uniuni_eligible={eligibility['uniuni_eligible_final']}")
+            
+            # Sync redo carriers
+            redo_file = job_dir / 'redo_carriers.json'
+            if redo_file.exists():
+                with open(redo_file, 'r') as f:
+                    redo_config = json.load(f)
+                selected = redo_config.get('selected_carriers', [])
+                changed = False
+                if eligibility['amazon_eligible_final'] and 'Amazon' not in selected:
+                    selected.append('Amazon')
+                    changed = True
+                if eligibility['uniuni_eligible_final'] and 'UniUni' not in selected:
+                    selected.append('UniUni')
+                    changed = True
+                if not eligibility['amazon_eligible_final'] and 'Amazon' in selected:
+                    selected = [c for c in selected if c != 'Amazon']
+                    changed = True
+                if not eligibility['uniuni_eligible_final'] and 'UniUni' in selected:
+                    selected = [c for c in selected if c != 'UniUni']
+                    changed = True
+                if changed:
+                    with open(redo_file, 'w') as f:
+                        json.dump({'selected_carriers': selected}, f)
+            
+            # Sync merchant pricing
+            pricing_file = job_dir / 'merchant_pricing.json'
+            if pricing_file.exists():
+                with open(pricing_file, 'r') as f:
+                    merchant_pricing = json.load(f)
+                excluded = merchant_pricing.get('excluded_carriers', [])
+                changed = False
+                if eligibility['amazon_eligible_final'] and 'Amazon' in excluded:
+                    excluded = [c for c in excluded if c != 'Amazon']
+                    changed = True
+                if eligibility['uniuni_eligible_final'] and 'UniUni' in excluded:
+                    excluded = [c for c in excluded if c != 'UniUni']
+                    changed = True
+                if not eligibility['amazon_eligible_final'] and 'Amazon' not in excluded:
+                    excluded.append('Amazon')
+                    changed = True
+                if not eligibility['uniuni_eligible_final'] and 'UniUni' not in excluded:
+                    excluded.append('UniUni')
+                    changed = True
+                if changed:
+                    merchant_pricing['excluded_carriers'] = excluded
+                    with open(pricing_file, 'w') as f:
+                        json.dump(merchant_pricing, f)
+            
+            # Clear dashboard caches
+            for cache_path in [_summary_cache_path(job_dir), _cache_path_for_job(job_dir), _carrier_details_cache_path(job_dir)]:
+                if cache_path.exists():
+                    cache_path.unlink()
+            
+            # Clear in-memory caches
+            job_prefix = f"{job_dir.name}:"
+            with summary_jobs_lock:
+                for key in list(summary_jobs.keys()):
+                    if key.startswith(job_prefix):
+                        summary_jobs.pop(key, None)
+            with dashboard_jobs_lock:
+                for key in list(dashboard_jobs.keys()):
+                    if key.startswith(job_prefix):
+                        dashboard_jobs.pop(key, None)
+            
+            return jsonify({
+                'success': True,
+                'amazon_eligible': eligibility['amazon_eligible_final'],
+                'uniuni_eligible': eligibility['uniuni_eligible_final']
+            })
+    
     with open(mapping_file, 'w') as f:
         json.dump(mapping_config, f)
     return jsonify({'success': True})
@@ -6006,6 +6099,8 @@ def update_annual_orders(job_id):
             annual_orders_value,
             mapping_config=mapping_config
         )
+        app.logger.info(f"Annual orders update - job_id={job_id}, annual_orders={annual_orders_value}, origin_zip={mapping_config.get('origin_zip')}")
+        app.logger.info(f"Eligibility result - amazon_volume_avg={eligibility['amazon_volume_avg']:.2f}, amazon_eligible={eligibility['amazon_eligible_final']}, uniuni_volume_avg={eligibility['uniuni_volume_avg']:.2f}, uniuni_eligible={eligibility['uniuni_eligible_final']}")
 
         # Sync redo carriers based on new eligibility
         redo_file = job_dir / 'redo_carriers.json'
@@ -6077,11 +6172,15 @@ def update_annual_orders(job_id):
                     dashboard_jobs.pop(key, None)
 
         # Return success with updated eligibility so frontend can refresh UI
+        app.logger.info(f"Annual orders response - amazon_eligible={eligibility['amazon_eligible_final']}, uniuni_eligible={eligibility['uniuni_eligible_final']}")
         return jsonify({
             'success': True,
             'eligibility': eligibility,
             'amazon_eligible': eligibility['amazon_eligible_final'],
-            'uniuni_eligible': eligibility['uniuni_eligible_final']
+            'uniuni_eligible': eligibility['uniuni_eligible_final'],
+            'annual_orders': annual_orders_value,
+            'amazon_volume_avg': eligibility['amazon_volume_avg'],
+            'uniuni_volume_avg': eligibility['uniuni_volume_avg']
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
