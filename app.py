@@ -5907,46 +5907,92 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     q_col = header_to_col.get('QUALIFIED')
     z_col = header_to_col.get('ZONE')
 
+    # OPTIMIZATION: Pre-process all data in bulk before writing
+    # This avoids per-cell Python overhead and dramatically speeds up writes
+    from openpyxl.cell.cell import Cell
+    
+    # Pre-process date column
+    if 'Order Date' in column_data:
+        date_col = []
+        for val in column_data['Order Date']:
+            if pd.isna(val):
+                date_col.append(None)
+            else:
+                try:
+                    if isinstance(val, str):
+                        val = pd.to_datetime(val)
+                    if hasattr(val, 'to_pydatetime'):
+                        val = val.to_pydatetime()
+                    date_col.append(val)
+                except:
+                    date_col.append(val)
+        column_data['Order Date'] = date_col
+    
+    # Pre-process zip column
+    if 'Zip' in column_data:
+        zip_col = []
+        for val in column_data['Zip']:
+            if pd.isna(val):
+                zip_col.append(None)
+            else:
+                zip_str = str(val).strip()
+                zip_match = re.search(r'\d{5}', zip_str)
+                zip_col.append(int(zip_match.group()) if zip_match else None)
+        column_data['Zip'] = zip_col
+    
+    # Pre-process numeric columns
+    for std_field, excel_col, col_idx in write_fields_prepared:
+        if excel_col in numeric_cols and std_field in column_data:
+            num_col = []
+            for val in column_data[std_field]:
+                if pd.isna(val) or val is None or val == '':
+                    num_col.append(None)
+                else:
+                    try:
+                        num_col.append(float(val))
+                    except:
+                        num_col.append(None)
+            column_data[std_field] = num_col
+    
+    # Pre-process origin zip column
+    if 'ORIGIN_ZIP_CODE' in column_data:
+        origin_col = []
+        for val in column_data['ORIGIN_ZIP_CODE']:
+            if pd.isna(val) or val is None:
+                origin_col.append(origin_zip_value)
+            else:
+                origin_col.append(val)
+        column_data['ORIGIN_ZIP_CODE'] = origin_col
+    
+    # Pre-process zone values
+    zone_col = None
+    if zone_values_fallback is not None and z_col and z_col not in formula_cols:
+        zone_col = []
+        for val in zone_values_fallback:
+            if val is not None and not pd.isna(val):
+                try:
+                    zone_col.append(int(float(val)))
+                except:
+                    zone_col.append(None)
+            else:
+                zone_col.append(None)
+    
+    # Write data using direct cell access (much faster than ws.cell())
+    write_start = time.time()
     for idx in range(total_rows):
         excel_row = start_row + idx
         
-        # Write mapped fields
+        # Write mapped fields using pre-processed data
         for std_field, excel_col, col_idx in write_fields_prepared:
             value = column_data[std_field][idx]
-            
-            if pd.isna(value):
-                value = None
-            elif std_field == 'ORIGIN_ZIP_CODE' and value is None:
-                value = origin_zip_value
-            elif std_field == 'Order Date' and excel_col == 'DATE':
-                try:
-                    if isinstance(value, str):
-                        value = pd.to_datetime(value)
-                    if hasattr(value, 'to_pydatetime'):
-                        value = value.to_pydatetime()
-                except:
-                    pass
-            elif std_field == 'Zip' and excel_col == 'DESTINATION_ZIP_CODE':
-                zip_str = str(value).strip()
-                zip_match = re.search(r'\d{5}', zip_str)
-                value = int(zip_match.group()) if zip_match else None
-            elif excel_col in numeric_cols:
-                try:
-                    value = float(value) if value else None
-                except:
-                    value = None
-            
             if value is not None:
                 ws.cell(row=excel_row, column=col_idx, value=value)
         
         # Write fallback ZONE
-        if zone_values_fallback is not None and z_col and z_col not in formula_cols:
-            zone_val = zone_values_fallback[idx] if idx < len(zone_values_fallback) else None
-            if zone_val is not None and not pd.isna(zone_val):
-                try:
-                    ws.cell(row=excel_row, column=z_col, value=int(float(zone_val)))
-                except:
-                    pass
+        if zone_col is not None and idx < len(zone_col):
+            zone_val = zone_col[idx]
+            if zone_val is not None:
+                ws.cell(row=excel_row, column=z_col, value=zone_val)
         
         # Write MERCHANT_ID
         if m_id and m_col and m_col not in formula_cols:
@@ -5957,7 +6003,8 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
             is_qualified = qualified_flags[idx] if idx < len(qualified_flags) else False
             ws.cell(row=excel_row, column=q_col, value=is_qualified)
 
-        # Note: Formula columns (AI-AN) are preserved from template with proper row-relative references
+    logging.info(f"Data write time: {time.time() - write_start:.1f}s for {total_rows} rows")
+    # Note: Formula columns (AI-AN) are preserved from template with proper row-relative references
 
     # Update Pricing & Summary redo carrier selections
     if 'Pricing & Summary' in wb.sheetnames:
