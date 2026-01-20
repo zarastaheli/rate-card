@@ -6738,16 +6738,30 @@ def deal_sizing_data(job_id):
         if not carrier_details:
             cache = _read_dashboard_cache(job_dir)
             breakdown = cache.get('breakdown', {})
+            annual_orders_value = _parse_number(annual_orders) or 1
             if breakdown:
                 for carrier in selected_carriers:
                     metrics = breakdown.get(carrier, {})
-                    spread = _parse_number(metrics.get('Spread Available'))
+                    # Spread Available is a TOTAL spread, not per-order
+                    # For USPS/UPS: JS calculates from $0.20/label or 11% of avg label
+                    # For FedEx/Amazon/UniUni: we need per-order spread
+                    total_spread = _parse_number(metrics.get('Spread Available'))
                     orders_pct = _parse_number(metrics.get('% Orders Won W/ Spread'))
                     if orders_pct > 1:
                         orders_pct /= 100
+                    
+                    # For USPS/UPS, don't need spread value - JS calculates it
+                    # For FedEx/Amazon/UniUni, convert total to per-order spread
+                    per_order_spread = 0
+                    if carrier in ('FedEx', 'Amazon', 'UniUni'):
+                        # Per-order spread = total spread / (orders * orders_pct)
+                        # since total = per_order * orders_pct * annual_orders
+                        effective_orders = annual_orders_value * orders_pct if orders_pct > 0 else 1
+                        per_order_spread = total_spread / effective_orders if effective_orders > 0 else 0
+                    
                     carrier_details.append({
                         'carrier': carrier,
-                        'spread': spread,
+                        'spread': per_order_spread,
                         'orders_won_pct': orders_pct
                     })
         
