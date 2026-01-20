@@ -5422,27 +5422,53 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         if sample:
             app.logger.info("Computed columns sample: %s", sample)
     
-    # Step 2: Write into template
-    write_progress(job_dir, 'write_template', True)
-    
-    # ... (rest of logic) ...
+    # Map standard fields to Excel columns
+    field_to_excel = {
+        'Order Number': 'ORDER_NUMBER',
+        'Order Date': 'DATE',
+        'Zip': 'DESTINATION_ZIP_CODE',
+        'Weight': 'WEIGHT_IN_OZ',
+        'WEIGHT_IN_LBS': 'WEIGHT_IN_LBS',
+        'Shipping Carrier': 'SHIPPING_CARRIER',
+        'CLEANED_SHIPPING_SERVICE': 'CLEANED_SHIPPING_SERVICE',
+        'Package Height': 'PACKAGE_HEIGHT',
+        'Package Width': 'PACKAGE_WIDTH',
+        'Package Length': 'PACKAGE_LENGTH',
+        'PACKAGE_DIMENSION_VOLUME': 'PACKAGE_DIMENSION_VOLUME',
+        'ORIGIN_ZIP_CODE': 'ORIGIN_ZIP_CODE',
+        'Shipping Service': 'SHIPPING_SERVICE',
+        'Label Cost': 'LABEL_COST',
+        'Zone': 'ZONE'
+    }
+
+    numeric_cols = {
+        'WEIGHT_IN_OZ', 'WEIGHT_IN_LBS', 'PACKAGE_HEIGHT', 'PACKAGE_WIDTH',
+        'PACKAGE_LENGTH', 'PACKAGE_DIMENSION_VOLUME', 'LABEL_COST'
+    }
+
+    write_cols = set()
+    write_fields = []
+    for std_field, excel_col in field_to_excel.items():
+        col_idx = header_to_col.get(excel_col)
+        if col_idx:
+            write_cols.add(col_idx)
+            if std_field in column_data:
+                write_fields.append((std_field, excel_col, col_idx))
 
     # Identify formula columns (AI-AN, 1-indexed)
     formula_cols = set(range(35, 41))
 
-    # Optimize: Pre-calculate lookups to avoid repeating work in loops
-    formula_cols_list = sorted(list(formula_cols))
+    # Optimize: Pre-calculate lookups
     write_fields_prepared = []
     for std_field, excel_col, col_idx in write_fields:
         if col_idx not in formula_cols:
             write_fields_prepared.append((std_field, excel_col, col_idx))
 
-    # Speed up: Batch write to sheet where possible, or minimize cell access
+    # Single pass for writing data
     total_rows = len(normalized_df)
     for idx in range(total_rows):
-        # Update progress less frequently to reduce I/O overhead
-        if idx % 500 == 0:
-            write_progress(job_dir, 'write_template', f"Writing data: {idx}/{total_rows}")
+        if idx % 1000 == 0:  # Even less frequent updates for maximum speed
+            write_progress(job_dir, 'write_template', f"{idx}/{total_rows}")
         excel_row = start_row + idx
         
         # Write mapped fields
