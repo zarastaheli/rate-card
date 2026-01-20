@@ -306,6 +306,43 @@ _PROGRESS_STATS_FILE = Path(app.config['UPLOAD_FOLDER']) / '.progress_stats.json
 _PROGRESS_STATS_LOCK = threading.Lock()
 USPS_ZONE_CSV_LOADED = False
 
+# New zone lookup from local CSV
+_ZONE_MAP = None
+
+def _load_zone_map():
+    """Load zone map from data/zip3_zone_lookup.csv"""
+    path = Path(__file__).resolve().parent / "data" / "zip3_zone_lookup.csv"
+    m = {}
+    if not path.exists():
+        logging.warning(f"Zone lookup CSV not found at {path}")
+        return m
+    try:
+        with path.open(newline="", encoding="utf-8") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                origin = row.get("origin_zip3", "").strip()
+                dest = row.get("dest_zip3", "").strip()
+                zone = row.get("zone", "").strip()
+                if origin and dest and zone:
+                    # Strip asterisks and non-numeric suffixes from zone (e.g. "1*" -> "1")
+                    zone_clean = re.sub(r'[^0-9]', '', zone)
+                    if zone_clean:
+                        m[(origin, dest)] = zone_clean
+        logging.info(f"Loaded {len(m)} zone mappings from CSV")
+    except Exception as e:
+        logging.error(f"Failed to load zone map: {e}")
+    return m
+
+def get_zone_from_zips(origin_zip: str, dest_zip: str):
+    """Get USPS zone from origin and destination ZIP codes using local CSV lookup."""
+    global _ZONE_MAP
+    if _ZONE_MAP is None:
+        _ZONE_MAP = _load_zone_map()
+    
+    o3 = str(origin_zip).strip()[:3].zfill(3)
+    d3 = str(dest_zip).strip()[:3].zfill(3)
+    return _ZONE_MAP.get((o3, d3))
+
 MANUAL_ZONE_TABLE_604 = """
 005 5 399 4 550---551 4 780---785 6
 006---009 8 400---402 3 553---558 4 786---787 5
@@ -905,15 +942,32 @@ def _fetch_usps_zone_chart_json(origin_zip3):
     return _zone_mapping_from_usps_json(data)
 
 def _fetch_usps_zone_chart(origin_zip3):
+    """Build a zone map for origin_zip3 using the local CSV lookup.
+    Returns a dict mapping dest_zip3 -> zone string.
+    """
     if not origin_zip3:
         return {}
-    with USPS_ZONE_CACHE_LOCK:
-        _load_usps_zone_csv_cache()
-        cached = USPS_ZONE_CACHE.get(origin_zip3)
-        if isinstance(cached, dict) and cached:
-            return cached
+    
+    # Load the zone map if not already loaded
+    global _ZONE_MAP
+    if _ZONE_MAP is None:
+        _ZONE_MAP = _load_zone_map()
+    
+    # Build zone map for this origin by filtering the global map
+    zone_map = {}
+    o3 = str(origin_zip3).strip()[:3].zfill(3)
+    for (orig, dest), zone in _ZONE_MAP.items():
+        if orig == o3:
+            zone_map[dest] = zone
+    
+    if zone_map:
+        return zone_map
+    
+    # Fallback to manual table for 604 if CSV missing
     if origin_zip3 == '604':
         return _build_manual_zone_map_604()
+    
+    logging.warning(f"No zone mappings found for origin ZIP3: {origin_zip3}")
     return {}
 
 def to_float(value):
