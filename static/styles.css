@@ -12,7 +12,7 @@
   --danger-bg: #fff1f2;
   --pill: #eef1f6;
   --link: #2563eb;
-  --ui-scale: 0.9;
+  --ui-scale: 0.83;
 }
 
 * {
@@ -143,7 +143,7 @@ body.tight-fit .upload-area {
 
 @media (max-height: 900px) {
   :root {
-    --ui-scale: 0.88;
+    --ui-scale: 0.81;
   }
   body {
     padding: 16px;
@@ -219,7 +219,7 @@ body.tight-fit .upload-area {
 
 @media (max-height: 820px) {
   body.tight-fit {
-    --ui-scale: 0.85;
+    --ui-scale: 0.78;
   }
 
   body.tight-fit .card {
@@ -233,7 +233,7 @@ body.tight-fit .upload-area {
 
 @media (max-height: 740px) {
   body.tight-fit {
-    --ui-scale: 0.82;
+    --ui-scale: 0.75;
   }
 
   body.tight-fit .card {
