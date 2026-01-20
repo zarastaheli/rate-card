@@ -2478,7 +2478,7 @@ def _read_metrics_from_excel_cells(rate_card_path):
         return {}
 
 def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=None):
-    """Pre-compute all dashboard metrics using Power Automate (preferred) or LibreOffice fallback."""
+    """Pre-compute dashboard metrics: LibreOffice for summary (accurate), Python for per-carrier (fast)."""
     job_dir = Path(job_dir)
     rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
     if not rate_card_files:
@@ -2491,77 +2491,55 @@ def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=
     selected_dashboard = _dashboard_selected_from_redo(selected_redo)
     available_carriers = list(DASHBOARD_CARRIERS)
     
-    # Try Power Automate first (fast, accurate, uses real Excel)
+    # Try Power Automate first if configured (fast + accurate)
     if POWER_AUTOMATE_URL:
-        app.logger.info("Using Power Automate for dashboard metrics (Excel Online calculation)")
-        
+        app.logger.info("Using Power Automate for dashboard metrics")
         carrier_metrics = {}
         for carrier in available_carriers:
-            app.logger.info(f"Computing metrics for {carrier} via Power Automate...")
             metrics = _get_dashboard_metrics_via_power_automate([carrier], available_carriers)
             if metrics:
                 carrier_metrics[carrier] = metrics
-                app.logger.info(f"  {carrier}: Spread={metrics.get('Spread Available')}")
-            else:
-                app.logger.warning(f"  {carrier}: Power Automate returned no metrics")
-        
-        app.logger.info(f"Computing summary for selection: {list(selected_dashboard)}")
         summary_metrics = _get_dashboard_metrics_via_power_automate(list(selected_dashboard), available_carriers)
-        
         if carrier_metrics and summary_metrics:
-            summary_by_selection = {}
-            default_key = _selection_cache_key(list(selected_dashboard))
-            summary_by_selection[default_key] = summary_metrics
-            app.logger.info(f"Summary metrics: {summary_metrics}")
-            
+            summary_by_selection = {_selection_cache_key(list(selected_dashboard)): summary_metrics}
             _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, full_hash)
-            app.logger.info("Dashboard metrics cache written successfully (from Power Automate)")
+            app.logger.info("Dashboard metrics cached (Power Automate)")
             return True
-        else:
-            app.logger.warning("Power Automate failed, falling back to LibreOffice")
     
-    # Fallback to LibreOffice (slower but works without Power Automate)
-    app.logger.info("Using LibreOffice for dashboard metrics (slower fallback)")
+    # Hybrid approach: LibreOffice for summary, Python for per-carrier
+    app.logger.info("Using hybrid approach: LibreOffice for summary, Python for per-carrier")
     
-    app.logger.info("Running LibreOffice to recalculate formulas...")
+    # Step 1: Summary metrics via LibreOffice FIRST (modifies file, so hash computed after)
+    app.logger.info("Running LibreOffice for accurate summary metrics...")
     recalc_success = _recalculate_excel_with_libreoffice(rate_card_path, timeout=180)
-    if not recalc_success:
-        app.logger.warning("LibreOffice recalc failed, falling back to Python calculation")
-        carrier_metrics = {}
-        for carrier in available_carriers:
-            metrics = _calculate_metrics_fast(job_dir, [carrier], mapping_config)
-            if metrics:
-                carrier_metrics[carrier] = metrics
-        summary_by_selection = {}
-        default_key = _selection_cache_key(list(selected_dashboard))
-        combined_metrics = _calculate_metrics_fast(job_dir, list(selected_dashboard), mapping_config)
-        summary_by_selection[default_key] = combined_metrics if combined_metrics else {}
-        _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, full_hash)
-        return True
     
-    app.logger.info("LibreOffice recalc complete, reading metrics from Excel cells")
+    summary_metrics = None
+    if recalc_success:
+        app.logger.info("LibreOffice recalc complete, reading summary from Excel")
+        summary_metrics = _read_metrics_from_excel_cells(rate_card_path)
+        app.logger.info(f"Summary from Excel: {summary_metrics}")
     
-    overall_metrics = _read_metrics_from_excel_cells(rate_card_path)
-    app.logger.info(f"Overall metrics from Excel: {overall_metrics}")
+    # Compute hash AFTER LibreOffice recalc (file may have changed)
+    full_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
     
+    # Step 2: Per-carrier metrics via Python (fast)
     carrier_metrics = {}
     for carrier in available_carriers:
-        app.logger.info(f"Computing metrics for {carrier} via LibreOffice...")
-        metrics = _toggle_carriers_and_read_metrics(rate_card_path, [carrier], available_carriers)
+        metrics = _calculate_metrics_fast(job_dir, [carrier], mapping_config)
         if metrics:
             carrier_metrics[carrier] = metrics
-            app.logger.info(f"  {carrier}: Spread={metrics.get('Spread Available')}")
+            app.logger.info(f"  {carrier} (Python): Spread={metrics.get('Spread Available')}")
     
-    app.logger.info(f"Restoring original selection: {list(selected_dashboard)}")
-    summary_metrics = _toggle_carriers_and_read_metrics(rate_card_path, list(selected_dashboard), available_carriers)
+    if not summary_metrics:
+        app.logger.warning("LibreOffice failed, using Python for summary too")
+        summary_metrics = _calculate_metrics_fast(job_dir, list(selected_dashboard), mapping_config)
     
     summary_by_selection = {}
     default_key = _selection_cache_key(list(selected_dashboard))
-    summary_by_selection[default_key] = summary_metrics if summary_metrics else overall_metrics
-    app.logger.info(f"Summary metrics: {summary_by_selection[default_key]}")
+    summary_by_selection[default_key] = summary_metrics if summary_metrics else {}
     
     _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, full_hash)
-    app.logger.info("Dashboard metrics cache written successfully (from LibreOffice)")
+    app.logger.info("Dashboard metrics cached (hybrid: Python per-carrier, LibreOffice summary)")
     return True
 
 def _summary_job_key(job_dir, source_mtime, selection_key):
