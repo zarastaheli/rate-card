@@ -44,7 +44,7 @@ body.tight-fit {
   max-width: calc(1240px / var(--ui-scale));
   margin: 0 auto;
   transform: scale(var(--ui-scale));
-  transform-origin: top center;
+  transform-origin: center center;
 }
 
 body.tight-fit .page-container {
