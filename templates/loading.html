@@ -47,7 +47,7 @@
         <div class="spinner"></div>
 
         <h1 class="loading-title">Generating Your Rate Card</h1>
-        <p class="loading-subtitle">Estimated Time Remaining: <span id="eta-remaining">50s</span></p>
+        <p class="loading-subtitle">Estimated Time Remaining: <span id="eta-remaining">45s</span></p>
 
         <ul class="loading-steps">
           <li class="loading-step" data-step="normalize">
@@ -106,14 +106,13 @@
       }
     }
 
-    let countdownSeconds = 50;
+    let countdownSeconds = 45;
     let countdownInterval = null;
-    let lastApiEta = null;
 
     function updateEtaDisplay() {
       const etaEl = document.getElementById('eta-remaining');
       if (etaEl) {
-        etaEl.textContent = `${Math.max(1, countdownSeconds)}s`;
+        etaEl.textContent = `${Math.max(1, Math.round(countdownSeconds))}s`;
       }
     }
 
@@ -133,17 +132,6 @@
 
         if (data.progress) {
           renderProgress(data.progress);
-        }
-
-        // Use real ETA from API when available
-        if (typeof data.eta_seconds_remaining === 'number' && data.eta_seconds_remaining >= 0) {
-          const apiEta = data.eta_seconds_remaining;
-          // Only update if API gives a meaningfully different value
-          if (lastApiEta === null || Math.abs(apiEta - countdownSeconds) > 3) {
-            countdownSeconds = apiEta;
-            updateEtaDisplay();
-          }
-          lastApiEta = apiEta;
         }
 
         if (data.error) {

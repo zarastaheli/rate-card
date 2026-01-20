@@ -378,11 +378,11 @@ def _parse_annual_orders(value):
 def compute_eligibility(origin_zip, annual_orders, working_days_per_year=None, mapping_config=None):
     """Compute eligibility for Amazon and UniUni carriers.
     
-    Eligibility is based on volume thresholds:
-    - Amazon: >= 150 orders per day (annual_orders / 365)
-    - UniUni: >= 300 orders per workday (annual_orders / working_days_per_year)
+    Eligibility requires BOTH ZIP code whitelist AND volume thresholds:
+    - Amazon: ZIP in Amazon whitelist AND >= 150 orders per day (annual_orders / 365)
+    - UniUni: ZIP in UniUni whitelist AND >= 300 orders per workday (annual_orders / working_days_per_year)
     
-    ZIP eligibility is kept for informational purposes but does not block eligibility.
+    Explicit overrides in mapping_config can bypass these requirements.
     """
     zip_eligible_amazon = is_amazon_eligible(origin_zip)
     zip_eligible_uniuni = is_uniuni_zip_eligible(origin_zip)
@@ -407,11 +407,11 @@ def compute_eligibility(origin_zip, annual_orders, working_days_per_year=None, m
         days = working_days_per_year or get_working_days_per_year()
         uniuni_volume_avg = annual_orders_value / days
 
-    # Volume eligibility: primary criteria
+    # Volume eligibility checks
     amazon_volume_eligible = amazon_volume_avg >= AMAZON_DAILY_MIN
     uniuni_volume_eligible = uniuni_volume_avg >= UNIUNI_WORKDAY_MIN
 
-    # Final eligibility: volume threshold is the main criteria
+    # Final eligibility: BOTH ZIP whitelist AND volume threshold must pass
     # Explicit overrides take precedence if set
     if amazon_override is not None:
         if isinstance(amazon_override, bool):
@@ -419,7 +419,7 @@ def compute_eligibility(origin_zip, annual_orders, working_days_per_year=None, m
         else:
             amazon_eligible_final = str(amazon_override).strip().lower() in ('1', 'true', 'yes', 'y')
     else:
-        amazon_eligible_final = amazon_volume_eligible
+        amazon_eligible_final = zip_eligible_amazon and amazon_volume_eligible
 
     if uniuni_override is not None:
         if isinstance(uniuni_override, bool):
@@ -427,7 +427,7 @@ def compute_eligibility(origin_zip, annual_orders, working_days_per_year=None, m
         else:
             uniuni_eligible_final = str(uniuni_override).strip().lower() in ('1', 'true', 'yes', 'y')
     else:
-        uniuni_eligible_final = uniuni_volume_eligible
+        uniuni_eligible_final = zip_eligible_uniuni and uniuni_volume_eligible
 
     return {
         'zip_eligible_amazon': zip_eligible_amazon,
@@ -6225,7 +6225,7 @@ def update_usps_market_discount(job_id):
         with open(mapping_file, 'w') as f:
             json.dump(mapping_config, f)
 
-        # Clear dashboard caches so they recalculate with new discounts
+        # Clear all dashboard and carrier details caches so they recalculate with new discounts
         summary_cache = _summary_cache_path(job_dir)
         breakdown_cache = _cache_path_for_job(job_dir)
         carrier_details_cache = _carrier_details_cache_path(job_dir)
@@ -6244,6 +6244,10 @@ def update_usps_market_discount(job_id):
             for key in list(dashboard_jobs.keys()):
                 if key.startswith(job_prefix):
                     dashboard_jobs.pop(key, None)
+        with carrier_details_jobs_lock:
+            for key in list(carrier_details_jobs.keys()):
+                if key.startswith(job_prefix):
+                    carrier_details_jobs.pop(key, None)
 
         return jsonify({'success': True})
     except Exception as e:
