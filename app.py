@@ -44,6 +44,10 @@ carrier_details_jobs_lock = threading.Lock()
 _template_cache = {}
 _template_cache_lock = threading.Lock()
 
+# Preloaded parsed workbook for faster generation
+_preloaded_wb_sheets = {}
+_preloaded_wb_lock = threading.Lock()
+
 # Rate tables cache - avoid re-parsing Excel on every dashboard call
 _rate_tables_cache = {}
 _rate_tables_cache_lock = threading.Lock()
