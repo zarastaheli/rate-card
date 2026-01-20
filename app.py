@@ -3861,7 +3861,14 @@ def log_admin_entry(job_id, mapping_config, merchant_pricing, redo_config):
 
 @app.route('/')
 def index():
-    clean_old_runs()
+    # Defer cleanup and preloading to background threads for fast health check response
+    threading.Thread(target=clean_old_runs, daemon=True).start()
+    # Start loading zone map in background so it's ready when user needs it
+    def _warm_zone_cache():
+        global _ZONE_MAP
+        if _ZONE_MAP is None:
+            _ZONE_MAP = _load_zone_map()
+    threading.Thread(target=_warm_zone_cache, daemon=True).start()
     return render_template('entry.html')
 
 @app.route('/upload')
