@@ -3059,8 +3059,8 @@ def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=
         app.logger.error("No normalized.csv found for precompute")
         return False
     
-    # Use rate card file for hash if it exists
-    rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+    # Use rate card file for hash if it exists (includes placeholder in fast mode)
+    rate_card_files = list(job_dir.glob('* - Rate Card*.xlsx'))
     full_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
     selected_redo = redo_config.get('selected_carriers', [])
     selected_dashboard = _dashboard_selected_from_redo(selected_redo)
@@ -6254,8 +6254,9 @@ def dashboard_data(job_id):
         annual_orders_missing = _annual_orders_missing(mapping_config)
         pct_off, dollar_off = _usps_market_discount_values(mapping_config)
         
-        # Require rate card Excel file for accurate calculations
-        rate_card_files = list(job_dir.glob('* - Rate Card.xlsx'))
+        # Check if dashboard is ready (rate card file exists - placeholder or real)
+        # In fast mode, we have a placeholder "* - Rate Card (Generating).xlsx"
+        rate_card_files = list(job_dir.glob('* - Rate Card*.xlsx'))
         if not rate_card_files:
             return jsonify({'error': 'Rate card not found'}), 404
         
