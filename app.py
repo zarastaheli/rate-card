@@ -5854,7 +5854,8 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
             if std_field in column_data:
                 write_fields.append((std_field, excel_col, col_idx))
 
-    # Identify formula columns (AI-AN, 1-indexed)
+    # Identify formula columns (AI-AN, 1-indexed) - these have row-relative formulas
+    # in the template that should NOT be overwritten
     formula_cols = set(range(35, 41))
 
     # Optimize: Pre-calculate lookups
@@ -5865,13 +5866,6 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
 
     # Single pass for writing data
     total_rows = len(normalized_df)
-    
-    # Pre-calculate formula values (they are constant formulas)
-    formula_values = {}
-    for col_idx in formula_cols:
-        source_cell = ws.cell(2, col_idx)
-        if source_cell.value and str(source_cell.value).startswith('='):
-            formula_values[col_idx] = source_cell.value
 
     # Identify other columns
     m_id = mapping_config.get('merchant_id')
@@ -5929,9 +5923,7 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
             is_qualified = qualified_flags[idx] if idx < len(qualified_flags) else False
             ws.cell(row=excel_row, column=q_col, value=is_qualified)
 
-        # Write Formulas directly in the loop to avoid second pass
-        for col_idx, formula in formula_values.items():
-            ws.cell(row=excel_row, column=col_idx, value=formula)
+        # Note: Formula columns (AI-AN) are preserved from template with proper row-relative references
 
     # Update Pricing & Summary redo carrier selections
     if 'Pricing & Summary' in wb.sheetnames:
