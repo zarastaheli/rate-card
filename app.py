@@ -93,6 +93,47 @@ def _load_workbook_with_retry(path, attempts=3, delay=0.2, **kwargs):
             time.sleep(delay * (attempt + 1))
     raise last_exc
 
+def _inject_calc_chain(xlsx_path, template_path):
+    """Inject calcChain.xml from template into generated xlsx.
+    
+    openpyxl strips calcChain.xml when saving, but Excel needs it to know
+    which cells to recalculate. This function copies it from the template.
+    Also updates workbook.xml.rels to reference the calcChain.
+    """
+    import shutil
+    import re
+    
+    # Read calcChain and its relationship from template
+    with zipfile.ZipFile(template_path, 'r') as template_zip:
+        if 'xl/calcChain.xml' not in template_zip.namelist():
+            return  # Template doesn't have calcChain
+        calc_chain_data = template_zip.read('xl/calcChain.xml')
+        template_rels = template_zip.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        # Extract the calcChain relationship
+        calc_rel_match = re.search(r'<Relationship[^>]*calcChain[^>]*/>', template_rels)
+        calc_rel = calc_rel_match.group(0) if calc_rel_match else None
+    
+    # Create a new xlsx with calcChain injected
+    temp_output = str(xlsx_path) + '.tmp'
+    with zipfile.ZipFile(xlsx_path, 'r') as orig_zip:
+        with zipfile.ZipFile(temp_output, 'w', zipfile.ZIP_DEFLATED) as new_zip:
+            for item in orig_zip.namelist():
+                data = orig_zip.read(item)
+                # Update workbook.xml.rels to include calcChain reference
+                if item == 'xl/_rels/workbook.xml.rels' and calc_rel:
+                    rels_content = data.decode('utf-8')
+                    if 'calcChain' not in rels_content:
+                        # Insert before closing </Relationships> tag
+                        rels_content = rels_content.replace('</Relationships>', 
+                            calc_rel + '</Relationships>')
+                        data = rels_content.encode('utf-8')
+                new_zip.writestr(item, data)
+            # Add calcChain.xml
+            new_zip.writestr('xl/calcChain.xml', calc_chain_data)
+    
+    # Replace original with new file
+    shutil.move(temp_output, xlsx_path)
+
 # Thresholds for size/weight classification.
 SMALL_MAX_VOLUME = 1728
 MEDIUM_MAX_VOLUME = 5000
@@ -5935,6 +5976,15 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         logging.info(f"Workbook save time: {time.time() - save_start:.1f}s")
         if not zipfile.is_zipfile(temp_file):
             raise Exception("Generated file is not a valid XLSX archive")
+        
+        # Inject calcChain.xml from template - openpyxl strips it but Excel needs it
+        # to know which cells to recalculate
+        try:
+            _inject_calc_chain(temp_file, template_path)
+            logging.info("calcChain.xml injected from template")
+        except Exception as calc_err:
+            logging.warning(f"Failed to inject calcChain: {calc_err}")
+        
         os.replace(temp_file, output_path)
     except Exception as e:
         if temp_file and temp_file.exists():
