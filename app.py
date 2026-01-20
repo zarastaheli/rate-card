@@ -42,6 +42,12 @@ carrier_details_jobs_lock = threading.Lock()
 _template_cache = {}
 _template_cache_lock = threading.Lock()
 
+# Rate tables cache - avoid re-parsing Excel on every dashboard call
+_rate_tables_cache = {}
+_rate_tables_cache_lock = threading.Lock()
+_pricing_controls_cache = {}
+_pricing_controls_cache_lock = threading.Lock()
+
 def _get_cached_template():
     """Get the template workbook from cache, loading if needed."""
     global _template_cache
@@ -1451,7 +1457,15 @@ CARRIER_PRIORITY = [
 
 @lru_cache(maxsize=4)
 def _get_pricing_controls(template_path_str):
+    global _pricing_controls_cache
     path = Path(template_path_str)
+    mtime = path.stat().st_mtime
+    
+    with _pricing_controls_cache_lock:
+        cached = _pricing_controls_cache.get(str(path))
+        if cached and cached.get('mtime') == mtime:
+            return cached['controls']
+    
     wb = _load_workbook_with_retry(path, data_only=True)
     ws = wb['Pricing & Summary']
     controls = {
@@ -1466,11 +1480,22 @@ def _get_pricing_controls(template_path_str):
         'c26': ws['C26'].value or 0
     }
     wb.close()
+    
+    with _pricing_controls_cache_lock:
+        _pricing_controls_cache[str(path)] = {'controls': controls, 'mtime': mtime}
+    
     return controls
 
-@lru_cache(maxsize=4)
 def _load_rate_tables(template_path_str):
+    global _rate_tables_cache
     path = Path(template_path_str)
+    mtime = path.stat().st_mtime
+    
+    with _rate_tables_cache_lock:
+        cached = _rate_tables_cache.get(str(path))
+        if cached and cached.get('mtime') == mtime:
+            return cached['tables']
+    
     wb = _load_workbook_with_retry(path, data_only=True)
     ws = wb['Redo Rate Cards']
     tables = {}
@@ -1492,6 +1517,10 @@ def _load_rate_tables(template_path_str):
             rates[row] = zone_rates
         tables[carrier] = rates
     wb.close()
+    
+    with _rate_tables_cache_lock:
+        _rate_tables_cache[str(path)] = {'tables': tables, 'mtime': mtime}
+    
     return tables
 
 def _rate_row_for_bucket(weight_bucket):
@@ -1655,6 +1684,365 @@ def _mode_or_min(series):
     if not counts.empty:
         return float(counts.index[0])
     return float(series.min())
+
+def _calculate_all_carriers_batch(job_dir, all_carriers, mapping_config):
+    """Calculate metrics for all carriers in a single pass - much faster than per-carrier calls."""
+    normalized_csv = Path(job_dir) / 'normalized.csv'
+    if not normalized_csv.exists():
+        return {}, {}
+    normalized_df = pd.read_csv(normalized_csv)
+    if normalized_df.empty:
+        return {}, {}
+
+    template_path = Path('#New Template - Rate Card.xlsx')
+    if not template_path.exists():
+        template_path = Path('Rate Card Template.xlsx')
+    rate_tables = _load_rate_tables(str(template_path))
+    controls = dict(_get_pricing_controls(str(template_path)))
+    pct_off, dollar_off = _usps_market_discount_values(mapping_config)
+    controls['c19'] = pct_off
+    controls['c20'] = dollar_off
+
+    merchant_pricing = {'excluded_carriers': [], 'included_services': []}
+    pricing_file = Path(job_dir) / 'merchant_pricing.json'
+    if pricing_file.exists():
+        with open(pricing_file, 'r') as f:
+            merchant_pricing = json.load(f)
+    excluded_carriers = merchant_pricing.get('excluded_carriers', [])
+    included_services = merchant_pricing.get('included_services', [])
+    if not included_services:
+        available_services = _unique_cleaned_services(normalized_df)
+        included_services = default_included_services(available_services)
+
+    normalized_selected = {normalize_service_name(s) for s in included_services}
+    normalized_excluded = {normalize_merchant_carrier(c) for c in excluded_carriers}
+
+    service_series = normalized_df.get('CLEANED_SHIPPING_SERVICE')
+    if service_series is None:
+        service_series = normalized_df.get('Shipping Service')
+    carrier_series = normalized_df.get('Shipping Carrier')
+    if service_series is None:
+        service_series = pd.Series([""] * len(normalized_df))
+    if carrier_series is None:
+        carrier_series = pd.Series([""] * len(normalized_df))
+
+    service_norm = service_series.fillna("").astype(str).apply(normalize_service_name)
+    carrier_norm = carrier_series.fillna("").astype(str).apply(normalize_merchant_carrier)
+    carrier_allowed = ~carrier_norm.isin(normalized_excluded)
+    qualified = service_norm.isin(normalized_selected) & carrier_allowed
+
+    weight_oz = normalized_df.get('WEIGHT_IN_OZ')
+    if weight_oz is None:
+        weight_oz = normalized_df.get('Weight')
+    if weight_oz is None:
+        weight_oz = pd.Series([np.nan] * len(normalized_df))
+    weight_lbs = normalized_df.get('WEIGHT_IN_LBS')
+    if weight_lbs is None:
+        weight_lbs = pd.Series([np.nan] * len(normalized_df))
+
+    weight_bucket = _compute_first_mile_weight(weight_oz, weight_lbs)
+    zone_series = normalized_df.get('Zone')
+    if zone_series is None:
+        zone_series = normalized_df.get('ZONE')
+    if zone_series is None:
+        zone_series = pd.Series([np.nan] * len(normalized_df))
+    zone = pd.to_numeric(zone_series, errors='coerce').astype('Int64')
+
+    label_cost = normalized_df.get('Label Cost')
+    if label_cost is None:
+        label_cost = normalized_df.get('LABEL_COST')
+    if label_cost is None:
+        label_cost = pd.Series([np.nan] * len(normalized_df))
+    label_cost = pd.to_numeric(label_cost, errors='coerce')
+
+    work_df = pd.DataFrame({
+        'zone': zone,
+        'weight_bucket': weight_bucket,
+        'label_cost': label_cost,
+        'qualified': qualified
+    })
+    work_df = work_df[work_df['zone'].between(1, 8)]
+    work_df = work_df[work_df['weight_bucket'].isin(WEIGHT_BUCKETS)]
+    if work_df.empty:
+        return {}, {}
+
+    count_all = work_df.groupby(['zone', 'weight_bucket']).size()
+    qualified_df = work_df[work_df['qualified']]
+    count_qualified = qualified_df.groupby(['zone', 'weight_bucket']).size()
+
+    merchant_rate = None
+    if controls['k2'] == 'USPS Market Rates':
+        merchant_rate = {}
+        usps_rates = rate_tables.get('USPS Market', {})
+        for (zone_val, weight_val), count_val in count_all.items():
+            row_idx = _rate_row_for_bucket(weight_val)
+            rate = None
+            if row_idx and row_idx in usps_rates:
+                rate = usps_rates[row_idx].get(int(zone_val))
+            if rate is not None:
+                merchant_rate[(zone_val, weight_val)] = rate
+    else:
+        if controls['g2'] == 'Minimum Rates':
+            merchant_rate = qualified_df.groupby(['zone', 'weight_bucket'])['label_cost'].min()
+        else:
+            merchant_rate = qualified_df.groupby(['zone', 'weight_bucket'])['label_cost'].apply(_mode_or_min)
+
+    total_qualified = 0
+    for key, count_val in count_qualified.items():
+        if count_val > 0:
+            total_qualified += count_val
+    if total_qualified <= 0:
+        return {}, {}
+
+    annual_orders = None
+    try:
+        annual_orders = int(float(mapping_config.get('annual_orders'))) if mapping_config.get('annual_orders') else None
+    except Exception:
+        annual_orders = None
+    scale_factor = 1.0
+    orders_in_analysis = total_qualified
+    if annual_orders and orders_in_analysis:
+        scale_factor = orders_in_analysis / annual_orders
+
+    c19 = float(controls['c19'] or 0)
+    c20 = float(controls['c20'] or 0)
+    usps_rates = rate_tables.get('USPS Market', {})
+
+    avg_qualified_label_cost = (
+        float(qualified_df['label_cost'].mean())
+        if not qualified_df.empty and qualified_df['label_cost'].notna().any()
+        else 0.0
+    )
+    annual_orders_value = annual_orders or orders_in_analysis
+
+    carrier_metrics = {}
+    for carrier in all_carriers:
+        if carrier not in rate_tables:
+            continue
+        selected_carriers = [carrier]
+        savings_all = 0.0
+        savings_won = 0.0
+        spread_all = 0.0
+        spread_won = 0.0
+        winable_count = 0.0
+        won_count = 0.0
+        usps_won_count = 0.0
+        ups_won_count = 0.0
+
+        for (zone_val, weight_val), count_val in count_all.items():
+            count_q = count_qualified.get((zone_val, weight_val), 0)
+            if count_q <= 0:
+                continue
+            merchant = merchant_rate.get((zone_val, weight_val))
+            if merchant is None or (isinstance(merchant, float) and math.isnan(merchant)):
+                continue
+            row_idx = _rate_row_for_bucket(weight_val)
+            if not row_idx:
+                continue
+            redo_rates = {}
+            for c in selected_carriers:
+                rate = rate_tables.get(c, {}).get(row_idx, {}).get(int(zone_val))
+                if rate is not None:
+                    redo_rates[c] = rate
+            if not redo_rates:
+                continue
+            min_rate = min(redo_rates.values())
+            winning_carrier = carrier
+
+            redo_rate = min_rate
+            usps_market_rate = usps_rates.get(row_idx, {}).get(int(zone_val)) if row_idx else None
+            if winning_carrier in {'USPS Market', 'UPS Ground', 'UPS Ground Saver'}:
+                rate_offered = redo_rate
+            else:
+                base_rate = merchant
+                if winning_carrier in {'UniUni', 'Amazon'} and usps_market_rate is not None:
+                    base_rate = usps_market_rate
+                if base_rate is None or (isinstance(base_rate, float) and math.isnan(base_rate)):
+                    continue
+                if c19 > 0:
+                    rate_offered = max(redo_rate, base_rate * (1 - c19))
+                else:
+                    rate_offered = max(redo_rate, base_rate - c20)
+
+            savings = merchant - rate_offered
+            base_savings = merchant - redo_rate
+            spread = rate_offered - redo_rate
+
+            savings_all += savings * count_val
+            spread_all += spread * count_val
+            if savings >= 0:
+                savings_won += savings * count_val
+                spread_won += spread * count_val
+                won_count += count_val
+                if winning_carrier == 'USPS Market':
+                    usps_won_count += count_val
+                if winning_carrier in {'UPS Ground', 'UPS Ground Saver'}:
+                    ups_won_count += count_val
+            if base_savings >= 0:
+                winable_count += count_val
+
+        if controls['c2'] == 'All Orders':
+            est_savings = savings_all
+            est_redo_deal = spread_all
+        else:
+            est_savings = savings_won / scale_factor if scale_factor else savings_won
+            est_redo_deal = spread_won / scale_factor if scale_factor else spread_won
+
+        usps_won_pct = usps_won_count / total_qualified if total_qualified else 0
+        ups_won_pct = ups_won_count / total_qualified if total_qualified else 0
+        selected_set = {carrier}
+        if selected_set.issubset({'USPS Market'}):
+            est_redo_deal = 0.20 * annual_orders_value * usps_won_pct
+        elif selected_set.issubset({'UPS Ground', 'UPS Ground Saver'}):
+            est_redo_deal = avg_qualified_label_cost * 0.11 * annual_orders_value * ups_won_pct
+
+        spread_available = est_savings + est_redo_deal
+        orders_winable = winable_count / total_qualified if total_qualified else 0
+        orders_won = won_count / total_qualified if total_qualified else 0
+
+        carrier_metrics[carrier] = {
+            'Est. Merchant Annual Savings': est_savings,
+            'Est. Redo Deal Size': est_redo_deal,
+            'Spread Available': spread_available,
+            'Orders Winable': orders_winable,
+            'Orders Won': orders_won,
+            'Orders Analyzed': total_qualified,
+            'Average Label Cost': avg_qualified_label_cost
+        }
+
+    context = {
+        'rate_tables': rate_tables,
+        'controls': controls,
+        'count_all': count_all,
+        'count_qualified': count_qualified,
+        'merchant_rate': merchant_rate,
+        'total_qualified': total_qualified,
+        'c19': c19,
+        'c20': c20,
+        'usps_rates': usps_rates,
+        'avg_qualified_label_cost': avg_qualified_label_cost,
+        'annual_orders_value': annual_orders_value,
+        'scale_factor': scale_factor
+    }
+    return carrier_metrics, context
+
+def _calculate_summary_from_context(selected_dashboard, context):
+    """Calculate summary metrics for a carrier selection using pre-loaded context."""
+    if not context:
+        return {}
+    rate_tables = context['rate_tables']
+    controls = context['controls']
+    count_all = context['count_all']
+    count_qualified = context['count_qualified']
+    merchant_rate = context['merchant_rate']
+    total_qualified = context['total_qualified']
+    c19 = context['c19']
+    c20 = context['c20']
+    usps_rates = context['usps_rates']
+    avg_qualified_label_cost = context['avg_qualified_label_cost']
+    annual_orders_value = context['annual_orders_value']
+    scale_factor = context['scale_factor']
+
+    selected_carriers = [c for c in selected_dashboard if c in rate_tables]
+    if not selected_carriers:
+        return {}
+
+    savings_all = 0.0
+    savings_won = 0.0
+    spread_all = 0.0
+    spread_won = 0.0
+    winable_count = 0.0
+    won_count = 0.0
+    usps_won_count = 0.0
+    ups_won_count = 0.0
+
+    for (zone_val, weight_val), count_val in count_all.items():
+        count_q = count_qualified.get((zone_val, weight_val), 0)
+        if count_q <= 0:
+            continue
+        merchant = merchant_rate.get((zone_val, weight_val))
+        if merchant is None or (isinstance(merchant, float) and math.isnan(merchant)):
+            continue
+        row_idx = _rate_row_for_bucket(weight_val)
+        if not row_idx:
+            continue
+        redo_rates = {}
+        for carrier in selected_carriers:
+            rate = rate_tables.get(carrier, {}).get(row_idx, {}).get(int(zone_val))
+            if rate is not None:
+                redo_rates[carrier] = rate
+        if not redo_rates:
+            continue
+        min_rate = min(redo_rates.values())
+        winning_carrier = None
+        for carrier in CARRIER_PRIORITY:
+            rate = redo_rates.get(carrier)
+            if rate is not None and abs(rate - min_rate) < 1e-9:
+                winning_carrier = carrier
+                break
+        if winning_carrier is None:
+            winning_carrier = min(redo_rates, key=redo_rates.get)
+
+        redo_rate = min_rate
+        usps_market_rate = usps_rates.get(row_idx, {}).get(int(zone_val)) if row_idx else None
+        if winning_carrier in {'USPS Market', 'UPS Ground', 'UPS Ground Saver'}:
+            rate_offered = redo_rate
+        else:
+            base_rate = merchant
+            if winning_carrier in {'UniUni', 'Amazon'} and usps_market_rate is not None:
+                base_rate = usps_market_rate
+            if base_rate is None or (isinstance(base_rate, float) and math.isnan(base_rate)):
+                continue
+            if c19 > 0:
+                rate_offered = max(redo_rate, base_rate * (1 - c19))
+            else:
+                rate_offered = max(redo_rate, base_rate - c20)
+
+        savings = merchant - rate_offered
+        base_savings = merchant - redo_rate
+        spread = rate_offered - redo_rate
+
+        savings_all += savings * count_val
+        spread_all += spread * count_val
+        if savings >= 0:
+            savings_won += savings * count_val
+            spread_won += spread * count_val
+            won_count += count_val
+            if winning_carrier == 'USPS Market':
+                usps_won_count += count_val
+            if winning_carrier in {'UPS Ground', 'UPS Ground Saver'}:
+                ups_won_count += count_val
+        if base_savings >= 0:
+            winable_count += count_val
+
+    if controls['c2'] == 'All Orders':
+        est_savings = savings_all
+        est_redo_deal = spread_all
+    else:
+        est_savings = savings_won / scale_factor if scale_factor else savings_won
+        est_redo_deal = spread_won / scale_factor if scale_factor else spread_won
+
+    usps_won_pct = usps_won_count / total_qualified if total_qualified else 0
+    ups_won_pct = ups_won_count / total_qualified if total_qualified else 0
+    selected_set = set(selected_dashboard or [])
+    if selected_set and selected_set.issubset({'USPS Market'}):
+        est_redo_deal = 0.20 * annual_orders_value * usps_won_pct
+    elif selected_set and selected_set.issubset({'UPS Ground', 'UPS Ground Saver'}):
+        est_redo_deal = avg_qualified_label_cost * 0.11 * annual_orders_value * ups_won_pct
+
+    spread_available = est_savings + est_redo_deal
+    orders_winable = winable_count / total_qualified if total_qualified else 0
+    orders_won = won_count / total_qualified if total_qualified else 0
+
+    return {
+        'Est. Merchant Annual Savings': est_savings,
+        'Est. Redo Deal Size': est_redo_deal,
+        'Spread Available': spread_available,
+        'Orders Winable': orders_winable,
+        'Orders Won': orders_won,
+        'Orders Analyzed': total_qualified,
+        'Average Label Cost': avg_qualified_label_cost
+    }
 
 def _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config):
     normalized_csv = job_dir / 'normalized.csv'
@@ -2506,26 +2894,22 @@ def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=
             app.logger.info("Dashboard metrics cached (Power Automate)")
             return True
     
-    # Fast Python calculations for instant dashboard loading
-    app.logger.info("Using fast Python calculations for dashboard metrics")
+    # Fast Python calculations - load data once, calculate all carriers
+    app.logger.info("Using fast batch Python calculations for dashboard metrics")
     
-    # Per-carrier metrics via Python (fast)
-    carrier_metrics = {}
-    for carrier in available_carriers:
-        metrics = _calculate_metrics_fast(job_dir, [carrier], mapping_config)
-        if metrics:
-            carrier_metrics[carrier] = metrics
-            app.logger.info(f"  {carrier}: Spread={metrics.get('Spread Available')}")
+    carrier_metrics, context = _calculate_all_carriers_batch(job_dir, available_carriers, mapping_config)
+    for carrier, metrics in carrier_metrics.items():
+        app.logger.info(f"  {carrier}: Spread={metrics.get('Spread Available')}")
     
-    # Summary metrics via Python (fast)
-    summary_metrics = _calculate_metrics_fast(job_dir, list(selected_dashboard), mapping_config)
+    # Summary metrics using pre-loaded context (instant)
+    summary_metrics = _calculate_summary_from_context(list(selected_dashboard), context)
     
     summary_by_selection = {}
     default_key = _selection_cache_key(list(selected_dashboard))
     summary_by_selection[default_key] = summary_metrics if summary_metrics else {}
     
     _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, full_hash)
-    app.logger.info("Dashboard metrics cached (Python calculations)")
+    app.logger.info("Dashboard metrics cached (batch Python calculations)")
     
     return True
 
@@ -5351,35 +5735,8 @@ def dashboard_data(job_id):
         cache_valid = cache.get('ready') and cached_file_hash == current_file_hash
         
         if not cache_valid:
-            bg_status = _get_background_cache_status(job_dir)
-            if bg_status and bg_status.get('status') == 'running':
-                return jsonify({
-                    'pending': True,
-                    'selected_carriers': selected_dashboard,
-                    'available_carriers': available_carriers,
-                    'annual_orders_missing': annual_orders_missing,
-                    'show_usps_market_discount': show_usps_market_discount,
-                    'usps_market_pct_off': pct_off,
-                    'usps_market_dollar_off': dollar_off,
-                    'carrier_percentages': carrier_percentages
-                })
-            elif bg_status and bg_status.get('status') == 'failed':
-                return jsonify({
-                    'error': f"Cache computation failed: {bg_status.get('error', 'Unknown error')}",
-                    'pending': False
-                }), 500
-            else:
-                _start_background_cache_job(job_dir, mapping_config, redo_config)
-                return jsonify({
-                    'pending': True,
-                    'selected_carriers': selected_dashboard,
-                    'available_carriers': available_carriers,
-                    'annual_orders_missing': annual_orders_missing,
-                    'show_usps_market_discount': show_usps_market_discount,
-                    'usps_market_pct_off': pct_off,
-                    'usps_market_dollar_off': dollar_off,
-                    'carrier_percentages': carrier_percentages
-                })
+            _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
+            cache = _read_dashboard_cache(job_dir)
         
         carrier_metrics = cache.get('breakdown', {})
         summary_cache = cache.get('summary', {})
@@ -5638,10 +5995,15 @@ def download_normalized(job_id):
     return send_file(normalized_csv, as_attachment=True, download_name='normalized.csv')
 
 if __name__ == '__main__':
-    # Preload template into cache at startup
+    # Preload template and rate tables into cache at startup
     try:
         _get_cached_template()
-        print("Template preloaded into cache")
+        template_path = Path('#New Template - Rate Card.xlsx')
+        if not template_path.exists():
+            template_path = Path('Rate Card Template.xlsx')
+        _load_rate_tables(str(template_path))
+        _get_pricing_controls(str(template_path))
+        print("Template and rate tables preloaded into cache")
     except Exception as e:
         print(f"Warning: Could not preload template: {e}")
     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)

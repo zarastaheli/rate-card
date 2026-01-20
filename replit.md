@@ -34,29 +34,37 @@ A Flask-based web application for shipping rate card analysis. The app processes
 ## Dashboard Caching Architecture
 The dashboard uses 100% Python calculations for instant loading with no external dependencies.
 
-### Computation Strategy
-- **Instant load**: Python/pandas calculations (~0.1 second)
+### Performance
+- **Cached load**: ~0.1 seconds (JSON read)
+- **Fresh calculation**: ~0.2 seconds (rate tables preloaded at startup)
 - **No external deps**: No LibreOffice or Excel automation required
-- **Fully cached**: Results stored as JSON for instant subsequent loads
+
+### Startup Optimization
+At app startup, the following are preloaded into memory:
+- Template workbook (BytesIO buffer)
+- Rate tables (parsed from Excel once)
+- Pricing controls (parsed from Excel once)
+
+This eliminates the 40+ second Excel parsing delay on first dashboard load.
 
 ### Cache Files (per job in `runs/<job_id>/`)
 - `dashboard_breakdown.json` - Pre-computed per-carrier metrics
 - `dashboard_summary.json` - Summary metrics by carrier selection
 
 ### Cache Flow
-1. **On Generate**: Python computes all metrics instantly (~1 second)
+1. **On Generate**: Python computes all metrics instantly (~0.2 seconds)
 2. **Cache Write**: Results saved to JSON files
 3. **On Dashboard Load**: Fast JSON read, instant display
 
 ### Key Functions
 - `_precompute_dashboard_metrics()` - Orchestrates metric calculation
-- `_calculate_metrics_fast()` - Core metric calculation using pandas
-- `_calculate_carrier_details_fast()` - Per-carrier breakdown
+- `_calculate_all_carriers_batch()` - Batch calculation for all carriers in one pass
+- `_calculate_summary_from_context()` - Summary metrics using pre-loaded context
 
 ### Technical Notes
 - Pure Python implementation - no LibreOffice, Excel automation, or external APIs
 - Calculations replicate Excel formula logic using pandas
-- Power Automate integration code exists but requires Microsoft 365 premium license
+- Rate tables and pricing controls are cached with file mtime checks for freshness
 
 ## Notes
 - The template file `#New Template - Rate Card.xlsx` must be in the project root
