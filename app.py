@@ -6423,8 +6423,11 @@ def dashboard_data(job_id):
         selection_key = _selection_cache_key(selected_dashboard)
         overall_metrics = summary_cache.get(selection_key)
         
+        logging.info(f"Dashboard summary request - selection_key={selection_key}, cached={bool(overall_metrics)}")
+        
         if not overall_metrics:
             overall_metrics = _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config)
+            logging.info(f"Calculated new metrics for {selection_key}: {overall_metrics}")
             if overall_metrics:
                 summary_cache[selection_key] = overall_metrics
                 _write_dashboard_cache(job_dir, carrier_metrics, summary_cache, current_hash)

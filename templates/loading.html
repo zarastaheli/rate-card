@@ -170,6 +170,24 @@
       setTimeout(pollStatus, 800);
     }
 
+    async function animateProgressAndRedirect(token) {
+      // Animate the progress bubbles filling in sequence
+      const steps = ["normalize", "write_template", "saving"];
+      for (let i = 0; i < steps.length; i++) {
+        const key = steps[i];
+        const progress = {};
+        for (let j = 0; j <= i; j++) {
+          progress[steps[j]] = true;
+        }
+        renderProgress(progress);
+        await new Promise(resolve => setTimeout(resolve, 400));
+      }
+      // Brief pause before redirect
+      await new Promise(resolve => setTimeout(resolve, 300));
+      stopCountdown();
+      window.location = `/dashboard?job_id=${token}`;
+    }
+
     async function startGeneration() {
       const token = "{{ token }}";
       try {
@@ -181,8 +199,8 @@
         const data = await res.json();
         
         if (data.status === 'completed') {
-          stopCountdown();
-          window.location = `/dashboard?job_id=${token}`;
+          // Animate bubbles before redirecting
+          await animateProgressAndRedirect(token);
           return;
         }
         
