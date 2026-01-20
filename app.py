@@ -5502,16 +5502,27 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
 
     # Single pass for writing data
     total_rows = len(normalized_df)
+    
+    # Pre-calculate formula values (they are constant formulas)
+    formula_values = {}
+    for col_idx in formula_cols:
+        source_cell = ws.cell(2, col_idx)
+        if source_cell.value and str(source_cell.value).startswith('='):
+            formula_values[col_idx] = source_cell.value
+
+    # Identify other columns
+    m_id = mapping_config.get('merchant_id')
+    m_col = header_to_col.get('MERCHANT_ID')
+    q_col = header_to_col.get('QUALIFIED')
+    z_col = header_to_col.get('ZONE')
+
     for idx in range(total_rows):
-        if idx % 1000 == 0:  # Even less frequent updates for maximum speed
-            write_progress(job_dir, 'write_template', f"{idx}/{total_rows}")
         excel_row = start_row + idx
         
         # Write mapped fields
         for std_field, excel_col, col_idx in write_fields_prepared:
             value = column_data[std_field][idx]
             
-            # Handle NaN values
             if pd.isna(value):
                 value = None
             elif std_field == 'ORIGIN_ZIP_CODE' and value is None:
@@ -5537,28 +5548,27 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
             if value is not None:
                 ws.cell(row=excel_row, column=col_idx, value=value)
         
-        # Write ZONE if fallback exists
-        if zone_values_fallback is not None:
-            z_col = header_to_col.get('ZONE')
-            if z_col and z_col not in formula_cols:
-                zone_val = zone_values_fallback[idx] if idx < len(zone_values_fallback) else None
-                if zone_val is not None and not pd.isna(zone_val):
-                    try:
-                        ws.cell(row=excel_row, column=z_col, value=int(float(zone_val)))
-                    except:
-                        pass
+        # Write fallback ZONE
+        if zone_values_fallback is not None and z_col and z_col not in formula_cols:
+            zone_val = zone_values_fallback[idx] if idx < len(zone_values_fallback) else None
+            if zone_val is not None and not pd.isna(zone_val):
+                try:
+                    ws.cell(row=excel_row, column=z_col, value=int(float(zone_val)))
+                except:
+                    pass
         
         # Write MERCHANT_ID
-        m_id = mapping_config.get('merchant_id')
-        m_col = header_to_col.get('MERCHANT_ID')
         if m_id and m_col and m_col not in formula_cols:
             ws.cell(row=excel_row, column=m_col, value=m_id)
         
         # Write QUALIFIED
-        q_col = header_to_col.get('QUALIFIED')
         if q_col and q_col not in formula_cols:
             is_qualified = qualified_flags[idx] if idx < len(qualified_flags) else False
             ws.cell(row=excel_row, column=q_col, value=is_qualified)
+
+        # Write Formulas directly in the loop to avoid second pass
+        for col_idx, formula in formula_values.items():
+            ws.cell(row=excel_row, column=col_idx, value=formula)
 
     # Update Pricing & Summary redo carrier selections
     if 'Pricing & Summary' in wb.sheetnames:
@@ -5584,18 +5594,6 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
             summary_ws, selected_services, normalized_df
         )
 
-    # Ensure formula columns remain formulas (copy from row 2 if exists)
-    last_data_row = start_row + len(normalized_df) - 1
-    if last_data_row >= start_row:
-        for col_idx in formula_cols:
-            source_cell = ws.cell(2, col_idx)
-            if source_cell.value and str(source_cell.value).startswith('='):
-                formula = source_cell.value
-                for row_idx in range(start_row, last_data_row + 1):
-                    target_cell = ws.cell(row_idx, col_idx)
-                    if not target_cell.value or not str(target_cell.value).startswith('='):
-                        target_cell.value = formula
-    
     # Step 3: Save and finalize
     write_progress(job_dir, 'saving', True)
     wb.calculation.fullCalcOnLoad = True
