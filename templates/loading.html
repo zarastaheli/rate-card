@@ -74,7 +74,7 @@
   <script>
     function renderProgress(progress = {}) {
       ["normalize", "write_template", "saving"].forEach((key) => {
-        const step = document.querySelector(`.loading-step[data-step="${key === 'saving' ? 'finalize' : key}"]`);
+        const step = document.querySelector(`.loading-step[data-step="${key}"]`);
         if (!step) return;
         
         const labelEl = step.querySelector(".loading-step-label");

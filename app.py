@@ -5977,31 +5977,32 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
             else:
                 zone_col.append(None)
     
-    # Write data using direct cell access (much faster than ws.cell())
+    # Write data using batch column writes (much faster than cell-by-cell)
     write_start = time.time()
-    for idx in range(total_rows):
-        excel_row = start_row + idx
-        
-        # Write mapped fields using pre-processed data
-        for std_field, excel_col, col_idx in write_fields_prepared:
-            value = column_data[std_field][idx]
+    
+    # Batch write each column at once instead of row-by-row
+    # This reduces Python function call overhead significantly
+    for std_field, excel_col, col_idx in write_fields_prepared:
+        col_values = column_data[std_field]
+        for idx, value in enumerate(col_values):
             if value is not None:
-                ws.cell(row=excel_row, column=col_idx, value=value)
-        
-        # Write fallback ZONE
-        if zone_col is not None and idx < len(zone_col):
-            zone_val = zone_col[idx]
+                ws.cell(row=start_row + idx, column=col_idx, value=value)
+    
+    # Write ZONE column in batch
+    if zone_col is not None and z_col:
+        for idx, zone_val in enumerate(zone_col):
             if zone_val is not None:
-                ws.cell(row=excel_row, column=z_col, value=zone_val)
-        
-        # Write MERCHANT_ID
-        if m_id and m_col and m_col not in formula_cols:
-            ws.cell(row=excel_row, column=m_col, value=m_id)
-        
-        # Write QUALIFIED
-        if q_col and q_col not in formula_cols:
-            is_qualified = qualified_flags[idx] if idx < len(qualified_flags) else False
-            ws.cell(row=excel_row, column=q_col, value=is_qualified)
+                ws.cell(row=start_row + idx, column=z_col, value=zone_val)
+    
+    # Write MERCHANT_ID column in batch
+    if m_id and m_col and m_col not in formula_cols:
+        for idx in range(total_rows):
+            ws.cell(row=start_row + idx, column=m_col, value=m_id)
+    
+    # Write QUALIFIED column in batch
+    if q_col and q_col not in formula_cols:
+        for idx, is_qualified in enumerate(qualified_flags):
+            ws.cell(row=start_row + idx, column=q_col, value=is_qualified)
 
     logging.info(f"Data write time: {time.time() - write_start:.1f}s for {total_rows} rows")
     # Note: Formula columns (AI-AN) are preserved from template with proper row-relative references
