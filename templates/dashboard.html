@@ -1261,13 +1261,20 @@
         carrierDetails: dealCarrierDetails
       });
       dealAdjustedOrders.textContent = formatNumber(spreadTotals.adjustedOrders || 0);
+      
+      // Show loading if carrier details are pending OR if we have no valid spread data yet
+      const hasValidSpreadData = dealCarrierDetails.length > 0 && 
+        dealCarrierDetails.some(d => d.orders_won_pct > 0 || d.spread > 0);
+      const showLoading = dealCarrierDetailsPending || (!hasValidSpreadData && spreadTotals.totalSpread === 0);
+      
       if (dealCarrierSpreadLoading) {
-        dealCarrierSpreadLoading.classList.toggle('is-hidden', !dealCarrierDetailsPending);
+        dealCarrierSpreadLoading.classList.toggle('is-hidden', !showLoading);
       }
       dealSpreadPerOrder = spreadTotals.spreadPerOrder || 0;
       const carrierSpreadEl = document.getElementById('deal-carrier-spread');
       if (carrierSpreadEl) {
-        carrierSpreadEl.textContent = formatCurrency(spreadTotals.totalSpread || 0);
+        // Show placeholder while loading
+        carrierSpreadEl.textContent = showLoading ? '$--' : formatCurrency(spreadTotals.totalSpread || 0);
       }
       if (lastPerCarrier.length) {
         renderBreakdown(lastPerCarrier);
@@ -1379,20 +1386,41 @@
       dealSizingModal.classList.remove('is-hidden');
       updateDealSizing();
 
-      if (data.carrier_details_pending) {
-        setTimeout(async () => {
-          const refresh = await fetch(`/api/deal-sizing/${jobId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ selected_carriers: currentSelection || [] })
-          });
-          const refreshed = await refresh.json();
-          if (!refreshed.error && Array.isArray(refreshed.carrier_details)) {
-            dealCarrierDetails = refreshed.carrier_details;
-            dealCarrierDetailsPending = !!refreshed.carrier_details_pending;
-            updateDealSizing();
+      // Poll for carrier details if pending or if we have no valid spread data
+      const hasValidData = dealCarrierDetails.length > 0 && 
+        dealCarrierDetails.some(d => d.orders_won_pct > 0 || d.spread > 0);
+      
+      if (data.carrier_details_pending || !hasValidData) {
+        let pollCount = 0;
+        const pollInterval = setInterval(async () => {
+          pollCount++;
+          if (pollCount > 20) { // Stop after 20 attempts (20 seconds)
+            clearInterval(pollInterval);
+            return;
           }
-        }, 900);
+          try {
+            const refresh = await fetch(`/api/deal-sizing/${jobId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ selected_carriers: currentSelection || [] })
+            });
+            const refreshed = await refresh.json();
+            if (!refreshed.error && Array.isArray(refreshed.carrier_details)) {
+              dealCarrierDetails = refreshed.carrier_details;
+              dealCarrierDetailsPending = !!refreshed.carrier_details_pending;
+              updateDealSizing();
+              
+              // Stop polling if we have valid data now
+              const nowHasValidData = dealCarrierDetails.length > 0 && 
+                dealCarrierDetails.some(d => d.orders_won_pct > 0 || d.spread > 0);
+              if (nowHasValidData && !dealCarrierDetailsPending) {
+                clearInterval(pollInterval);
+              }
+            }
+          } catch (e) {
+            // Ignore fetch errors during polling
+          }
+        }, 1000);
       }
     }
 
