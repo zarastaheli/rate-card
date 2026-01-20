@@ -32,13 +32,12 @@ A Flask-based web application for shipping rate card analysis. The app processes
 - Werkzeug - WSGI utilities
 
 ## Dashboard Caching Architecture
-The dashboard uses progressive loading: fast Python estimates first, then accurate Excel values.
+The dashboard uses 100% Python calculations for instant loading with no external dependencies.
 
 ### Computation Strategy
-- **Instant load**: Python calculations (~0.1 second) for immediate display
-- **Background refinement**: LibreOffice recalculates Excel formulas (~2 min, async)
-- **Auto-update**: Cache silently updated with exact values when LibreOffice completes
-- **Result**: Users see estimates immediately, accurate values on next visit
+- **Instant load**: Python/pandas calculations (~0.1 second)
+- **No external deps**: No LibreOffice or Excel automation required
+- **Fully cached**: Results stored as JSON for instant subsequent loads
 
 ### Cache Files (per job in `runs/<job_id>/`)
 - `dashboard_breakdown.json` - Pre-computed per-carrier metrics
@@ -46,20 +45,18 @@ The dashboard uses progressive loading: fast Python estimates first, then accura
 
 ### Cache Flow
 1. **On Generate**: Python computes all metrics instantly (~1 second)
-2. **Background**: LibreOffice refinement starts in async thread
+2. **Cache Write**: Results saved to JSON files
 3. **On Dashboard Load**: Fast JSON read, instant display
-4. **When LibreOffice Done**: Cache updated with accurate Excel values
 
 ### Key Functions
-- `_precompute_dashboard_metrics()` - Fast Python + background LibreOffice
+- `_precompute_dashboard_metrics()` - Orchestrates metric calculation
 - `_calculate_metrics_fast()` - Core metric calculation using pandas
-- `_recalculate_excel_with_libreoffice()` - Accurate formula evaluation
-- `_read_metrics_from_excel_cells()` - Read summary from Excel cells C5-C12
+- `_calculate_carrier_details_fast()` - Per-carrier breakdown
 
 ### Technical Notes
-- Python estimates are within ~10% of Excel formula values
-- LibreOffice runs in background thread, doesn't block user
-- Power Automate integration exists but requires Microsoft 365 premium license
+- Pure Python implementation - no LibreOffice, Excel automation, or external APIs
+- Calculations replicate Excel formula logic using pandas
+- Power Automate integration code exists but requires Microsoft 365 premium license
 
 ## Notes
 - The template file `#New Template - Rate Card.xlsx` must be in the project root
