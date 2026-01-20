@@ -91,9 +91,15 @@ The app tracks timestamps for each major processing phase to enable accurate ETA
 
 ### Gunicorn Configuration
 - Uses `--preload` flag to parse templates/rate tables once before forking workers
-- 4 workers share preloaded data in memory (~42s startup, but fast first request)
+- 4 workers share preloaded data in memory
 - Startup logs show `[PRELOAD]` messages for each cached resource
 - Rate tables and pricing controls stay in memory rather than re-reading Excel
+- Generation time: ~50-52 seconds (24s template parse + 25s workbook save)
+
+### Dashboard Carrier Toggle Behavior
+- **Summary**: Recalculates based on selected carriers
+- **Breakdown**: Shows ALL carriers, hides deselected ones (no recalculation)
+- Carrier toggling is fast - only summary API call, breakdown re-renders locally
 
 ## Carrier Eligibility
 
