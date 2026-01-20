@@ -4774,6 +4774,17 @@ def upload():
         # Merchant name is manual; do not auto-suggest.
         merchant_name_suggestion = None
         
+        # Record upload phase timestamp with started_at as baseline
+        progress_file = job_dir / 'progress.json'
+        now = datetime.now(timezone.utc).isoformat()
+        with open(progress_file, 'w') as f:
+            json.dump({
+                'started_at': now,
+                'phase_timestamps': {
+                    'upload': now
+                }
+            }, f)
+        
         return jsonify({
             'job_id': job_id,
             'detected_structure': structure,
@@ -4865,6 +4876,9 @@ def mapping():
         # Save config
         with open(job_dir / 'mapping.json', 'w') as f:
             json.dump(config, f)
+        
+        # Record mapping phase timestamp
+        write_progress(job_dir, 'mapping', True)
         
         # Apply mapping
         normalized_data = {}
@@ -5354,12 +5368,25 @@ def generate():
             except Exception:
                 pass
 
-        progress_payload = {
-            'started_at': datetime.now(timezone.utc).isoformat(),
-            'eta_seconds': estimated_seconds
-        }
+        # Merge with existing progress to preserve upload/mapping phase timestamps
+        existing_progress = {}
+        if progress_file.exists():
+            try:
+                with open(progress_file, 'r') as f:
+                    existing_progress = json.load(f)
+            except Exception:
+                pass
+        
+        # Update with generation start info, preserving phase_timestamps
+        existing_progress['eta_seconds'] = estimated_seconds
+        if 'started_at' not in existing_progress:
+            existing_progress['started_at'] = datetime.now(timezone.utc).isoformat()
+        if 'phase_timestamps' not in existing_progress:
+            existing_progress['phase_timestamps'] = {}
+        existing_progress['phase_timestamps']['generation_start'] = datetime.now(timezone.utc).isoformat()
+        
         with open(progress_file, 'w') as f:
-            json.dump(progress_payload, f)
+            json.dump(existing_progress, f)
         
         # Generate Excel and dashboard metrics in background thread
         def run_generation():
@@ -5380,13 +5407,16 @@ def generate():
         return jsonify({'error': str(e)}), 500
 
 def write_progress(job_dir, step, value=True):
-    """Write progress update"""
+    """Write progress update with timestamp for phase tracking"""
     progress_file = job_dir / 'progress.json'
     progress = {}
     if progress_file.exists():
         with open(progress_file, 'r') as f:
             progress = json.load(f)
     progress[step] = value
+    if 'phase_timestamps' not in progress:
+        progress['phase_timestamps'] = {}
+    progress['phase_timestamps'][step] = datetime.now(timezone.utc).isoformat()
     with open(progress_file, 'w') as f:
         json.dump(progress, f)
 
@@ -5411,8 +5441,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     output_filename = f"{merchant_name} - Rate Card.xlsx"
     output_path = job_dir / output_filename
     
-    # Step 1: Normalize data
+    # Step 1: Normalize/qualify data (keep 'normalize' for compatibility)
     write_progress(job_dir, 'normalize', True)
+    write_progress(job_dir, 'qualification', True)
     
     # Load template from cache (fast BytesIO copy instead of 25s file read)
     load_start = time.time()
@@ -5672,6 +5703,9 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     except Exception:
         pass
 
+    # Mark Excel generation complete
+    write_progress(job_dir, 'excel_complete', True)
+    
     logging.info(f"Total generation time: {time.time() - gen_start:.1f}s")
     return output_path
 
@@ -5719,18 +5753,41 @@ def status(job_id=None):
         })
     
     eta_remaining = None
+    elapsed_seconds = None
     if progress.get('started_at') and progress.get('eta_seconds'):
         try:
             started_at = datetime.fromisoformat(progress['started_at'])
-            elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
-            eta_remaining = max(0, int(progress['eta_seconds'] - elapsed))
+            elapsed_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
+            eta_remaining = max(0, int(progress['eta_seconds'] - elapsed_seconds))
         except Exception:
             eta_remaining = None
+
+    phase_timestamps = progress.get('phase_timestamps', {})
+    phase_durations = {}
+    if phase_timestamps:
+        try:
+            sorted_phases = sorted(phase_timestamps.items(), key=lambda x: x[1])
+            # Use first phase as baseline if started_at is missing
+            baseline = progress.get('started_at')
+            if not baseline and sorted_phases:
+                baseline = sorted_phases[0][1]
+            if baseline:
+                prev_time = datetime.fromisoformat(baseline)
+                for phase, ts in sorted_phases:
+                    phase_time = datetime.fromisoformat(ts)
+                    duration = (phase_time - prev_time).total_seconds()
+                    phase_durations[phase] = round(max(0, duration), 2)
+                    prev_time = phase_time
+        except Exception:
+            pass
 
     return jsonify({
         'ready': False,
         'progress': progress,
-        'eta_seconds_remaining': eta_remaining
+        'eta_seconds_remaining': eta_remaining,
+        'elapsed_seconds': round(elapsed_seconds, 2) if elapsed_seconds else None,
+        'phase_timestamps': phase_timestamps,
+        'phase_durations': phase_durations
     })
 
 @app.route('/api/dashboard/<job_id>', methods=['GET', 'POST'])
@@ -6075,17 +6132,30 @@ def download_normalized(job_id):
 
 def _preload_resources():
     """Preload template data and rate tables when the module is imported."""
+    import time as _time
+    preload_start = _time.time()
     try:
         template_path = Path('#New Template - Rate Card.xlsx')
         if not template_path.exists():
             template_path = Path('Rate Card Template.xlsx')
 
+        logging.info(f"[PRELOAD] Starting template preload at {datetime.now(timezone.utc).isoformat()}")
+        
+        t0 = _time.time()
         _get_cached_template()
+        logging.info(f"[PRELOAD] Template buffer loaded in {_time.time() - t0:.2f}s")
+        
+        t0 = _time.time()
         _load_rate_tables(str(template_path))
+        logging.info(f"[PRELOAD] Rate tables parsed in {_time.time() - t0:.2f}s")
+        
+        t0 = _time.time()
         _get_pricing_controls(str(template_path))
-        logging.info("Template and rate tables preloaded into cache")
+        logging.info(f"[PRELOAD] Pricing controls loaded in {_time.time() - t0:.2f}s")
+        
+        logging.info(f"[PRELOAD] All resources preloaded in {_time.time() - preload_start:.2f}s - workers are warm")
     except Exception as exc:
-        logging.warning(f"Could not preload template: {exc}")
+        logging.warning(f"[PRELOAD] Could not preload template: {exc}")
 
 _preload_resources()
 

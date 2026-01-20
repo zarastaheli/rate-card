@@ -22,13 +22,13 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --log-level info --preload"
-waitForPort = 5000
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "gunicorn app:app --workers 3 --timeout 120 --bind 0.0.0.0:5000 --preload --log-level info"
+waitForPort = 5000
 
 [[ports]]
 localPort = 5000
