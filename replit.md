@@ -94,7 +94,17 @@ The app tracks timestamps for each major processing phase to enable accurate ETA
 - 4 workers share preloaded data in memory
 - Startup logs show `[PRELOAD]` messages for each cached resource
 - Rate tables and pricing controls stay in memory rather than re-reading Excel
-- Generation time: ~50-52 seconds (24s template parse + 25s workbook save)
+- Generation time: ~3-5 seconds (fast mode with Python calculations only)
+
+### Fast Generation Mode
+The app uses fast generation mode by default:
+- Skips Excel template loading and saving (the slow part)
+- Computes dashboard metrics using pure Python calculations
+- Creates a placeholder Excel file for status checks
+- Dashboard works fully using JSON-cached metrics
+- **Tradeoff**: Downloaded Excel is a placeholder, not the full rate card
+
+To enable full Excel generation (slower), modify `generate()` to call `generate_rate_card()` instead of `generate_rate_card_fast()`.
 
 ### Dashboard Carrier Toggle Behavior
 - **Summary**: Recalculates based on selected carriers
