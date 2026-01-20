@@ -5833,9 +5833,10 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     write_progress(job_dir, 'normalize', True)
     write_progress(job_dir, 'qualification', True)
     
-    # Load template from cached pre-parsed workbook (2s deepcopy vs 24s parsing)
+    # Load template from cached BytesIO
     load_start = time.time()
-    wb = _get_parsed_workbook()
+    template_buffer = _get_cached_template()
+    wb = openpyxl.load_workbook(template_buffer, keep_vba=False, data_only=False)
     logging.info(f"Template load time: {time.time() - load_start:.1f}s")
     if 'Raw Data' not in wb.sheetnames:
         raise ValueError("Template must contain 'Raw Data' sheet")
@@ -6890,11 +6891,6 @@ def _preload_resources():
             t0 = _time.time()
             _get_pricing_controls(str(template_path))
             logging.info(f"[PRELOAD] Pricing controls loaded in {_time.time() - t0:.2f}s")
-            
-            # Pre-parse workbook for fast generation (one-time 24s cost)
-            t0 = _time.time()
-            _get_parsed_workbook()
-            logging.info(f"[PRELOAD] Workbook pre-parsed in {_time.time() - t0:.2f}s")
             
             logging.info(f"[PRELOAD] All resources preloaded in {_time.time() - preload_start:.2f}s - workers are warm")
             _resources_loaded = True
