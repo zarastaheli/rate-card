@@ -6030,14 +6030,12 @@ def _write_cells_via_regex(xlsx_path, sheet_index, cell_updates, add_to_shared_s
 
 
 def generate_rate_card(job_dir, mapping_config, merchant_pricing):
-    """Generate the rate card Excel file - PURE XML VERSION
+    """Generate the rate card Excel file.
     
-    Copies template, uses openpyxl READ-ONLY for header mapping,
-    then does ALL writes via direct XML manipulation.
-    This preserves all table structures without corruption.
+    Loads template with openpyxl, writes data to cells, saves.
+    Uses helper functions to update Pricing & Summary sections.
     """
     import logging
-    import shutil
     gen_start = time.time()
     
     merchant_name = mapping_config.get('merchant_name', 'Merchant')
@@ -6054,30 +6052,20 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     if not template_path.exists():
         raise FileNotFoundError("Template file not found")
     
-    # COPY template - preserves all binary structure including tables
-    shutil.copy2(template_path, output_path)
-    logging.info(f"Template copied")
-    
-    # Load with openpyxl READ-ONLY to get header mapping - DO NOT SAVE
-    load_start = time.time()
-    wb = openpyxl.load_workbook(template_path, keep_vba=False, data_only=False, read_only=True)
-    logging.info(f"Template load time: {time.time() - load_start:.1f}s")
+    # Load template with openpyxl
+    wb = openpyxl.load_workbook(template_path, keep_vba=False, data_only=False)
+    logging.info(f"Template loaded")
     
     if 'Raw Data' not in wb.sheetnames:
         raise ValueError("Template must contain 'Raw Data' sheet")
     ws = wb['Raw Data']
     
     # Get header mapping from row 1
-    headers = [cell.value for cell in list(ws.iter_rows(min_row=1, max_row=1))[0]]
+    headers = [cell.value for cell in ws[1]]
     header_to_col = {}
     for idx, header in enumerate(headers):
         if header:
             header_to_col[str(header).strip()] = idx + 1
-    
-    # Get Pricing & Summary header positions for carrier toggles
-    pricing_ws = wb['Pricing & Summary'] if 'Pricing & Summary' in wb.sheetnames else None
-    
-    wb.close()  # Close WITHOUT saving - just used for reading
     
     # Load configs
     redo_config = {}
@@ -6090,8 +6078,8 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     origin_zip_value = extract_origin_zip(mapping_config.get('origin_zip'))
     
     write_progress(job_dir, 'write_template', True)
-    write_start = time.time()
     
+    # Map DataFrame fields to Excel columns
     field_to_excel = {
         'Order Number': 'ORDER_NUMBER',
         'Order Date': 'DATE',
@@ -6110,104 +6098,98 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         'Zone': 'ZONE'
     }
     
-    # Build cell updates for Raw Data (sheet 1) - use cell references like 'A2'
-    raw_data_updates = {}
+    # Build column index map for data columns (skip formula columns)
+    formula_cols = set()
+    for col_idx in range(1, ws.max_column + 1):
+        cell = ws.cell(2, col_idx)
+        if cell.value and str(cell.value).startswith('='):
+            formula_cols.add(col_idx)
+    
+    # Write data to Raw Data sheet
     start_row = 2
     m_id = mapping_config.get('merchant_id')
     m_col = header_to_col.get('MERCHANT_ID')
     
-    for row_idx, row_data in normalized_df.iterrows():
+    for row_idx in range(len(normalized_df)):
         excel_row = start_row + row_idx
+        row_data = normalized_df.iloc[row_idx]
         
         for df_field, excel_col in field_to_excel.items():
             col_idx = header_to_col.get(excel_col)
-            if col_idx and df_field in normalized_df.columns:
+            if col_idx and col_idx not in formula_cols and df_field in normalized_df.columns:
                 value = row_data.get(df_field)
                 if pd.notna(value):
-                    cell_ref = f"{_col_to_letter(col_idx)}{excel_row}"
-                    raw_data_updates[cell_ref] = value
+                    ws.cell(excel_row, col_idx).value = value
         
         # ORIGIN_ZIP_CODE fallback
         origin_col = header_to_col.get('ORIGIN_ZIP_CODE')
-        if origin_col and origin_zip_value:
-            cell_ref = f"{_col_to_letter(origin_col)}{excel_row}"
-            if cell_ref not in raw_data_updates:
-                raw_data_updates[cell_ref] = origin_zip_value
+        if origin_col and origin_col not in formula_cols and origin_zip_value:
+            cell = ws.cell(excel_row, origin_col)
+            if cell.value is None or pd.isna(cell.value):
+                cell.value = origin_zip_value
         
         # MERCHANT_ID
-        if m_col and m_id:
-            cell_ref = f"{_col_to_letter(m_col)}{excel_row}"
-            raw_data_updates[cell_ref] = m_id
+        if m_col and m_col not in formula_cols and m_id:
+            ws.cell(excel_row, m_col).value = m_id
     
-    # Write Raw Data via regex (sheet 1) - preserves all XML structure
-    _write_cells_via_regex(output_path, 1, raw_data_updates)
-    logging.info(f"Raw Data write time: {time.time() - write_start:.1f}s for {len(normalized_df)} rows")
+    logging.info(f"Raw Data written: {len(normalized_df)} rows")
     
-    # Build Pricing & Summary updates (sheet 2)
+    # Update Pricing & Summary sheet
     write_progress(job_dir, 'saving', True)
-    pricing_start = time.time()
     
     selected_redo = redo_config.get('selected_carriers', [])
     selected_services = merchant_pricing.get('included_services', [])
     excluded_carriers = merchant_pricing.get('excluded_carriers', [])
     
-    annual_orders_value = mapping_config.get('annual_orders')
+    if 'Pricing & Summary' in wb.sheetnames:
+        summary_ws = wb['Pricing & Summary']
+        
+        # Annual Orders
+        annual_orders_value = mapping_config.get('annual_orders')
+        try:
+            annual_orders_value = int(float(annual_orders_value)) if annual_orders_value else 13968
+        except Exception:
+            annual_orders_value = 13968
+        summary_ws['C9'] = annual_orders_value
+        
+        # Origin Zip
+        if origin_zip_value:
+            summary_ws['C29'] = origin_zip_value
+        
+        # USPS discount values
+        pct_off, dollar_off = _usps_market_discount_values(mapping_config)
+        summary_ws['C19'] = pct_off
+        summary_ws['C20'] = dollar_off
+        
+        # Update carrier and service level sections using helper functions
+        update_pricing_summary_redo_carriers(summary_ws, selected_redo)
+        update_pricing_summary_merchant_carriers(summary_ws, excluded_carriers)
+        update_pricing_summary_merchant_service_levels(summary_ws, selected_services, normalized_df)
+    
+    logging.info(f"Pricing & Summary updated")
+    
+    # Save workbook
+    write_progress(job_dir, 'finalize', True)
+    wb.calculation.fullCalcOnLoad = True
+    wb.calculation.calcMode = "auto"
+    
+    temp_file = None
     try:
-        annual_orders_value = int(float(annual_orders_value)) if annual_orders_value else 13968
-    except Exception:
-        annual_orders_value = 13968
-    
-    pct_off, dollar_off = _usps_market_discount_values(mapping_config)
-    
-    # Pricing & Summary cell updates - using cell references
-    pricing_updates = {
-        'C9': annual_orders_value,
-        'C19': pct_off,
-        'C20': dollar_off,
-    }
-    if origin_zip_value:
-        pricing_updates['C29'] = origin_zip_value
-    
-    # Redo Carriers: rows 8-13 column G for Yes/No
-    redo_carrier_rows = {
-        'USPS Market': 8,
-        'UPS Ground': 9,
-        'UPS Ground Saver': 10,
-        'FedEx': 11,
-        'UniUni': 12,
-        'Amazon': 13,
-    }
-    selected_set = set(selected_redo)
-    for carrier, row in redo_carrier_rows.items():
-        pricing_updates[f'G{row}'] = 'Yes' if carrier in selected_set else 'No'
-    
-    # Merchant Carriers: rows 15-20 column G for Yes/No  
-    excluded_set = {normalize_merchant_carrier(c) for c in excluded_carriers}
-    merchant_carrier_rows = {
-        'UPS': 15,
-        'USPS': 16,
-        'FedEx': 17,
-        'DHL': 18,
-        'OnTrac': 19,
-        'Other': 20,
-    }
-    for carrier, row in merchant_carrier_rows.items():
-        carrier_norm = normalize_merchant_carrier(carrier)
-        pricing_updates[f'G{row}'] = 'No' if carrier_norm in excluded_set else 'Yes'
-    
-    # Service Levels: rows 23-72 column G for Yes/No
-    selected_services_norm = {normalize_service_name(s) for s in selected_services}
-    for idx, service in enumerate(SERVICE_LEVELS):
-        row = 23 + idx
-        if row > 72:
-            break
-        service_norm = normalize_service_name(service)
-        pricing_updates[f'E{row}'] = service
-        pricing_updates[f'G{row}'] = 'Yes' if service_norm in selected_services_norm else 'No'
-    
-    # Write Pricing & Summary via regex (sheet 2) - preserves all XML structure
-    _write_cells_via_regex(output_path, 2, pricing_updates)
-    logging.info(f"Pricing & Summary write time: {time.time() - pricing_start:.1f}s")
+        with tempfile.NamedTemporaryFile(delete=False, dir=job_dir, suffix='.xlsx') as tmp:
+            temp_file = Path(tmp.name)
+        wb.save(temp_file)
+        if not zipfile.is_zipfile(temp_file):
+            raise Exception("Generated file is not a valid XLSX archive")
+        os.replace(temp_file, output_path)
+    except Exception as e:
+        if temp_file and temp_file.exists():
+            try:
+                temp_file.unlink()
+            except Exception:
+                pass
+        raise Exception(f"Failed to save Excel file: {str(e)}")
+    finally:
+        wb.close()
     
     # Pre-compute dashboard metrics
     try:
