@@ -246,7 +246,7 @@ DEFAULT_PHASE_ESTIMATES = {
     'normalize': 3.0,
     'qualification': 2.0,
     'write_template': 25.0,
-    'saving': 6.0
+    'saving': 20.0
 }
 _PROGRESS_STATS_FILE = Path(app.config['UPLOAD_FOLDER']) / '.progress_stats.json'
 _PROGRESS_STATS_LOCK = threading.Lock()
@@ -5826,7 +5826,7 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     write_progress(job_dir, 'write_template', True)
     
     start_row = 2
-    origin_zip_value = mapping_config.get('origin_zip')
+    origin_zip_value = extract_origin_zip(mapping_config.get('origin_zip'))
     
     # Pre-calculate zone fallback values if needed
     zone_values_fallback = None
@@ -6220,7 +6220,9 @@ def dashboard_data(job_id):
         include_per_carrier = request.args.get('per_carrier') == '1'
         per_carrier = []
         if include_per_carrier:
-            for carrier in selected_dashboard or available_carriers:
+            # Always return ALL carriers for breakdown - UI handles hiding deselected ones
+            # Breakdown metrics don't change based on selection, only summary does
+            for carrier in available_carriers:
                 metrics = carrier_metrics.get(carrier, {})
                 if annual_orders_missing:
                     metrics = {k: v for k, v in metrics.items() if k not in ('Est. Merchant Annual Savings', 'Est. Redo Deal Size', 'Spread Available')}
@@ -6238,7 +6240,7 @@ def dashboard_data(job_id):
                 'usps_market_pct_off': pct_off,
                 'usps_market_dollar_off': dollar_off,
                 'carrier_percentages': carrier_percentages,
-                'per_carrier_total': len(selected_dashboard or available_carriers)
+                'per_carrier_total': len(available_carriers)
             })
         
         selection_key = _selection_cache_key(selected_dashboard)

@@ -759,12 +759,18 @@
           .filter(val => val !== null);
         maxValues[key] = values.length ? Math.max(...values) : null;
       });
+      // Filter out globally hidden carriers, and hide deselected carriers
+      const selectedSet = new Set(currentSelection || []);
       perCarrier
         .filter(row => !hiddenCarriers.has(row.carrier))
         .forEach((row) => {
         const metrics = row.metrics || {};
         const rowEl = document.createElement('div');
         rowEl.className = 'breakdown-row';
+        // Hide deselected carriers (but keep them in DOM for re-render)
+        if (selectedSet.size > 0 && !selectedSet.has(row.carrier)) {
+          rowEl.classList.add('is-hidden');
+        }
         const formatWithHighlight = (key) => {
           if (annualOrdersMissing && suppressedMetrics.has(key)) {
             return '--';
@@ -949,8 +955,13 @@
         }
         currentSelection = nextSelected;
         renderCarrierBars(carriers, nextSelected);
-        loadDashboard(nextSelected, false, true, true).then(async () => {
-          await loadPerCarrier(true);
+        // Only reload summary (not breakdown) when toggling carriers
+        // Breakdown metrics don't change - just re-render to show/hide rows
+        loadDashboard(nextSelected, false, true, false).then(async () => {
+          // Re-render breakdown with current selection (no server fetch needed)
+          if (lastPerCarrier && lastPerCarrier.length) {
+            renderBreakdown(lastPerCarrier);
+          }
           await refreshDealSizeFromStoredInputs();
         });
       }, 200);
