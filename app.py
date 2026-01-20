@@ -5919,9 +5919,11 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     # Step 3: Save and finalize
     write_progress(job_dir, 'saving', True)
     # Force Excel to recalculate all formulas when file is opened
-    wb.calculation.fullCalcOnLoad = True
+    # openpyxl strips calcChain.xml when saving, so we need these flags to force recalc
     wb.calculation.calcMode = "auto"
-    # Note: Do NOT remove _calcChain as it's needed for Excel to know which cells to recalculate
+    wb.calculation.fullCalcOnLoad = True
+    wb.calculation.forceFullCalc = True  # Forces complete recalculation rebuild
+    wb.calculation.calcOnSave = False    # Don't try to calculate on save (openpyxl can't)
     
     # Save the workbook atomically
     temp_file = None
