@@ -5446,6 +5446,12 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         'PACKAGE_LENGTH', 'PACKAGE_DIMENSION_VOLUME', 'LABEL_COST'
     }
 
+    # Get merchant pricing selections
+    excluded_carriers = merchant_pricing.get('excluded_carriers', [])
+    included_services = merchant_pricing.get('included_services', [])
+    normalized_selected = {normalize_service_name(s) for s in included_services}
+    normalized_excluded = {normalize_merchant_carrier(c) for c in excluded_carriers}
+
     # Speed optimization: Extract data to lists first
     column_data = {
         field: normalized_df[field].tolist()
