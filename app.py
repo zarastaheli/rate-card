@@ -5151,7 +5151,36 @@ def merchant_pricing(job_id):
         available_services = available_merchant_services(raw_df, mapping_config)
         available_carriers = available_merchant_carriers(raw_df, mapping_config)
 
+        # Sync eligibility with merchant pricing
+        eligibility = compute_eligibility(
+            mapping_config.get('origin_zip'),
+            mapping_config.get('annual_orders'),
+            mapping_config=mapping_config
+        )
+        
         excluded = saved.get('excluded_carriers', [])
+        
+        # Auto-remove from excluded if eligible, auto-add if not
+        if eligibility['amazon_eligible_final']:
+            if 'Amazon' in excluded:
+                excluded = [c for c in excluded if c != 'Amazon']
+        else:
+            if 'Amazon' not in excluded:
+                excluded.append('Amazon')
+                
+        if eligibility['uniuni_eligible_final']:
+            if 'UniUni' in excluded:
+                excluded = [c for c in excluded if c != 'UniUni']
+        else:
+            if 'UniUni' not in excluded:
+                excluded.append('UniUni')
+        
+        # Save back if changed
+        if excluded != saved.get('excluded_carriers', []):
+            saved['excluded_carriers'] = excluded
+            with open(pricing_file, 'w') as f:
+                json.dump(saved, f)
+
         included_services = saved.get('included_services', [])
         if not has_saved and not included_services:
             included_services = default_included_services(available_services)
@@ -5247,29 +5276,39 @@ def redo_carriers(job_id):
         for fallback in ('FedEx',):
             if fallback not in available:
                 available.append(fallback)
+        
+        # Ensure UniUni and Amazon are always available in the selection list if eligible
+        if eligibility['amazon_eligible_final'] and 'Amazon' not in available:
+            available.append('Amazon')
+        if eligibility['uniuni_eligible_final'] and 'UniUni' not in available:
+            available.append('UniUni')
+
         selected = list(REDO_FORCED_ON)
         if eligibility['amazon_eligible_final'] and 'Amazon' not in selected:
             selected.append('Amazon')
         if eligibility['uniuni_eligible_final'] and 'UniUni' not in selected:
             selected.append('UniUni')
 
+        # Sync redo_carriers.json file if it exists to ensure persistence
         redo_file = job_dir / 'redo_carriers.json'
         if redo_file.exists():
-            with open(redo_file, 'r') as f:
-                saved = json.load(f)
-                selected = saved.get('selected_carriers', list(REDO_FORCED_ON))
-            for forced in REDO_FORCED_ON:
-                if forced not in selected:
-                    selected.append(forced)
-            if eligibility['amazon_eligible_final'] and 'Amazon' not in selected:
-                selected.append('Amazon')
-            if eligibility['uniuni_eligible_final'] and 'UniUni' not in selected:
-                selected.append('UniUni')
+            try:
+                with open(redo_file, 'r') as f:
+                    saved_redo = json.load(f)
+                rs = saved_redo.get('selected_carriers', [])
+                changed = False
+                if eligibility['amazon_eligible_final'] and 'Amazon' not in rs:
+                    rs.append('Amazon')
+                    changed = True
+                if eligibility['uniuni_eligible_final'] and 'UniUni' not in rs:
+                    rs.append('UniUni')
+                    changed = True
+                if changed:
+                    with open(redo_file, 'w') as f:
+                        json.dump({'selected_carriers': rs}, f)
+            except:
+                pass
 
-        if not eligibility['amazon_eligible_final']:
-            selected = [c for c in selected if c != 'Amazon']
-        if not eligibility['uniuni_eligible_final']:
-            selected = [c for c in selected if c != 'UniUni']
         return jsonify({
             'detected_carriers': available,
             'selected_carriers': selected,

@@ -637,6 +637,11 @@
         const saved = getSavedDealSize();
         dealSizingCard.classList.toggle('has-deal-size', saved !== null);
       }
+      // USPS Widgets visibility sync
+      const showDiscounts = !!currentMetrics['show_usps_market_discount'];
+      if (uspsDiscountRow) {
+          uspsDiscountRow.classList.toggle('is-hidden', !showDiscounts);
+      }
     }
 
     let carrierPercentages = {};
