@@ -43,7 +43,7 @@ body {
 .card {
   background: var(--card-bg);
   border-radius: 18px;
-  padding: 48px 56px;
+  padding: clamp(28px, 3vw, 44px) clamp(28px, 4vw, 52px);
   border: 1px solid var(--border);
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
   animation: cardFade 0.5s ease;
@@ -52,12 +52,12 @@ body {
 }
 
 .card--mapping {
-  padding: 40px 44px;
+  padding: clamp(24px, 3vw, 36px) clamp(24px, 3.5vw, 44px);
 }
 
 .card--upload {
-  padding: 64px 56px;
-  min-height: clamp(520px, 70vh, 600px);
+  padding: clamp(32px, 4vw, 56px) clamp(28px, 4vw, 52px);
+  min-height: clamp(360px, 60vh, 520px);
   display: flex;
   flex-direction: column;
 }
@@ -68,7 +68,7 @@ body {
 }
 
 .card--tall {
-  min-height: clamp(520px, 72vh, 620px);
+  min-height: clamp(420px, 65vh, 560px);
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
@@ -335,7 +335,7 @@ h1,
 .field-label-inline {
   font-weight: 600;
   color: #1f2937;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .required-asterisk {
@@ -345,10 +345,10 @@ h1,
 .text-input,
 .dropdown {
   width: 100%;
-  padding: 9px 12px;
+  padding: 8px 10px;
   border: 1px solid #d7dbe7;
   border-radius: 10px;
-  font-size: 14px;
+  font-size: 13px;
   background: #ffffff;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
@@ -425,10 +425,10 @@ h1,
 }
 
 .button {
-  padding: 12px 22px;
+  padding: 10px 18px;
   border-radius: 12px;
   border: none;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -677,7 +677,7 @@ h1,
 }
 
 .section-block {
-  margin-top: 16px;
+  margin-top: 10px;
 }
 
 .selected-carriers-section {
@@ -685,7 +685,7 @@ h1,
 }
 
 .section-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #4b5563;
   margin-bottom: 8px;
@@ -1201,14 +1201,14 @@ h1,
 .deal-sizing-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 16px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .deal-sizing-grid--compact {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-  margin-top: 18px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .deal-sizing-grid--inputs {
@@ -1368,14 +1368,14 @@ h1,
 .deal-sizing-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  margin: 18px 0 8px;
+  gap: 10px;
+  margin: 10px 0 4px;
 }
 
 .deal-summary-card {
   border: 1px solid #eef1f6;
   border-radius: 16px;
-  padding: 18px;
+  padding: 12px;
   text-align: center;
   background: #ffffff;
 }
@@ -1389,7 +1389,7 @@ h1,
 }
 
 .deal-summary-value {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 700;
   color: #0f172a;
 }
@@ -1679,15 +1679,15 @@ h1,
   min-height: 100vh;
   align-items: center;
   justify-content: center;
-  padding: 32px;
+  padding: 16px;
   display: flex;
   max-width: none;
 }
 
 .entry-card {
-  max-width: 1280px;
+  max-width: 1080px;
   width: 100%;
-  padding: 48px;
+  padding: clamp(20px, 2.5vw, 32px);
   border-radius: 24px;
   background: #ffffff;
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.12);

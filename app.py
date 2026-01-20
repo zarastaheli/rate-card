@@ -333,7 +333,9 @@ def is_amazon_eligible(origin_zip):
     amazon_zips = _load_amazon_zips()
     if len(digits) >= 5:
         digits = digits[:5]
-        return digits in amazon_zips.get('zip5', set())
+        if digits in amazon_zips.get('zip5', set()):
+            return True
+        return digits[:3] in amazon_zips.get('zip3', set())
     return digits[:3] in amazon_zips.get('zip3', set())
 
 def is_uniuni_zip_eligible(origin_zip):
@@ -5293,9 +5295,6 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         with open(redo_file, 'r') as f:
             redo_config = json.load(f)
 
-    # Load original raw CSV to get zone if needed
-    raw_df = pd.read_csv(job_dir / 'raw_invoice.csv')
-    
     # Load normalized data
     normalized_df = pd.read_csv(job_dir / 'normalized.csv')
 
@@ -5322,13 +5321,30 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
     # Step 2: Write into template
     write_progress(job_dir, 'write_template', True)
     
-    # Find zone column in original CSV if zone-based
+    # Find zone column in original CSV only if needed
     zone_col = mapping_config.get('zone_column')
-    if not zone_col and mapping_config.get('structure') == 'zone':
-        for col in raw_df.columns:
-            if 'zone' in col.lower():
-                zone_col = col
-                break
+    zone_values_fallback = None
+    needs_zone_fallback = (
+        'Zone' not in normalized_df.columns
+        and mapping_config.get('structure') == 'zone'
+    )
+    if needs_zone_fallback:
+        raw_csv_path = job_dir / 'raw_invoice.csv'
+        if not zone_col:
+            try:
+                raw_headers = pd.read_csv(raw_csv_path, nrows=0).columns
+            except Exception:
+                raw_headers = []
+            for col in raw_headers:
+                if 'zone' in col.lower():
+                    zone_col = col
+                    break
+        if zone_col:
+            try:
+                raw_zone_series = pd.read_csv(raw_csv_path, usecols=[zone_col])[zone_col]
+                zone_values_fallback = pd.to_numeric(raw_zone_series, errors='coerce').tolist()
+            except Exception:
+                zone_values_fallback = None
     
     # Map standard fields to Excel columns
     field_to_excel = {
@@ -5400,8 +5416,16 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         for field in field_to_excel.keys()
         if field in normalized_df.columns
     }
-    shipping_service_data = normalized_df['Shipping Service'].tolist() if 'Shipping Service' in normalized_df.columns else None
-    shipping_carrier_data = normalized_df['Shipping Carrier'].tolist() if 'Shipping Carrier' in normalized_df.columns else None
+    service_series = normalized_df.get('Shipping Service')
+    if service_series is None:
+        service_series = pd.Series([""] * len(normalized_df))
+    carrier_series = normalized_df.get('Shipping Carrier')
+    if carrier_series is None:
+        carrier_series = pd.Series([""] * len(normalized_df))
+    service_norm = service_series.fillna("").astype(str).apply(normalize_service_name)
+    carrier_norm = carrier_series.fillna("").astype(str).apply(normalize_merchant_carrier)
+    carrier_allowed = ~carrier_norm.isin(normalized_excluded)
+    qualified_flags = (service_norm.isin(normalized_selected) & carrier_allowed).tolist()
 
     write_cols = set()
     write_fields = []
@@ -5493,16 +5517,15 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         
         # Zone is now handled through the mapping like other fields
         # But if it's zone-based and zone wasn't mapped, try to get it from raw CSV
-        if 'Zone' not in normalized_df.columns and mapping_config.get('structure') == 'zone' and zone_col:
+        if zone_values_fallback is not None:
             if 'ZONE' in header_to_col:
                 col_idx = header_to_col['ZONE']
                 if col_idx not in formula_cols:
-                    zone_value = raw_df.iloc[idx][zone_col] if idx < len(raw_df) else None
-                    if pd.notna(zone_value):
+                    zone_value = zone_values_fallback[idx] if idx < len(zone_values_fallback) else None
+                    if zone_value is not None and not pd.isna(zone_value):
                         try:
-                            zone_value = int(float(zone_value))
-                            ws.cell(excel_row, col_idx, zone_value)
-                        except:
+                            ws.cell(excel_row, col_idx, int(float(zone_value)))
+                        except Exception:
                             pass
         
         # Write MERCHANT_ID if provided
@@ -5515,12 +5538,7 @@ def generate_rate_card(job_dir, mapping_config, merchant_pricing):
         if 'QUALIFIED' in header_to_col:
             col_idx = header_to_col['QUALIFIED']
             if col_idx not in formula_cols:
-                shipping_service = str(shipping_service_data[idx]) if shipping_service_data is not None else ''
-                normalized_service = normalize_service_name(shipping_service)
-                carrier_value = shipping_carrier_data[idx] if shipping_carrier_data is not None else ''
-                carrier_normalized = normalize_merchant_carrier(carrier_value)
-                carrier_allowed = not carrier_normalized or carrier_normalized not in normalized_excluded
-                is_qualified = carrier_allowed and normalized_service in normalized_selected
+                is_qualified = qualified_flags[idx] if idx < len(qualified_flags) else False
                 ws.cell(excel_row, col_idx, is_qualified)
 
     # Update Pricing & Summary redo carrier selections
