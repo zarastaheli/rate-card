@@ -3696,7 +3696,6 @@ def log_admin_entry(job_id, mapping_config, merchant_pricing, redo_config):
 
 @app.route('/')
 def index():
-    _preload_resources()  # Lazy load on first real request
     clean_old_runs()
     return render_template('entry.html')
 
@@ -5497,6 +5496,7 @@ def redo_carriers(job_id):
 @app.route('/api/generate', methods=['POST'])
 def generate():
     """Start rate card generation - generates Excel synchronously for accurate calculations"""
+    _preload_resources()  # Ensure resources are loaded before generation
     try:
         data = request.json
         job_id = data.get('job_id')

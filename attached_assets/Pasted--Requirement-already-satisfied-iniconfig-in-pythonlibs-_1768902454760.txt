@@ -1,0 +1,50 @@
+
+Requirement already satisfied: iniconfig in ./.pythonlibs/lib/python3.11/site-packages (from pytest==7.4.3->-r requirements.txt (line 6)) (2.3.0)
+
+Requirement already satisfied: pluggy<2.0,>=0.12 in ./.pythonlibs/lib/python3.11/site-packages (from pytest==7.4.3->-r requirements.txt (line 6)) (1.6.0)
+
+Requirement already satisfied: coverage>=5.2.1 in ./.pythonlibs/lib/python3.11/site-packages (from coverage[toml]>=5.2.1->pytest-cov==4.1.0->-r requirements.txt (line 7)) (7.13.1)
+
+Requirement already satisfied: python-dateutil>=2.8.2 in ./.pythonlibs/lib/python3.11/site-packages (from pandas>=2.2.0->-r requirements.txt (line 4)) (2.9.0.post0)
+
+Requirement already satisfied: tzdata>=2022.7 in ./.pythonlibs/lib/python3.11/site-packages (from pandas>=2.2.0->-r requirements.txt (line 4)) (2025.3)
+
+Requirement already satisfied: charset_normalizer<4,>=2 in ./.pythonlibs/lib/python3.11/site-packages (from requests->-r requirements.txt (line 15)) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in ./.pythonlibs/lib/python3.11/site-packages (from requests->-r requirements.txt (line 15)) (3.11)
+
+Requirement already satisfied: mock in ./.pythonlibs/lib/python3.11/site-packages (from xlcalculator->-r requirements.txt (line 18)) (5.2.0)
+
+Requirement already satisfied: six>=1.5 in ./.pythonlibs/lib/python3.11/site-packages (from python-dateutil>=2.8.2->pandas>=2.2.0->-r requirements.txt (line 4)) (1.17.0)
+
+Downloading gunicorn-21.2.0-py3-none-any.whl (80 kB)
+
+Installing collected packages: gunicorn
+
+  Attempting uninstall: gunicorn
+
+    Found existing installation: gunicorn 23.0.0
+
+    Uninstalling gunicorn-23.0.0:
+
+      Successfully uninstalled gunicorn-23.0.0
+
+Successfully installed gunicorn-21.2.0
+
+2026-01-20T09:42:57Z info: Skipping Build as no Build command set
+2026-01-20T09:42:58Z info: Pushing pid1 binary layer...
+2026-01-20T09:42:59Z info: Pushing Repl layer...
+2026-01-20T09:42:59Z info: Pushing hosting layer...
+2026-01-20T09:42:59Z info: Retrieved cached nix layer
+2026-01-20T09:42:59Z info: Created pid1 binary layer
+2026-01-20T09:42:59Z info: Created hosting layer
+2026-01-20T09:43:27Z info: Created Repl layer
+2026-01-20T09:43:27Z info: Pushing Repl (cache) layer...
+2026-01-20T09:43:28Z info: Created Repl (cache) layer
+2026-01-20T09:43:29Z info: Pushed image manifest
+2026-01-20T09:43:31Z info: Pushed soci index manifest
+2026-01-20T09:43:34Z info: Creating Autoscale service
+starting up user application
+forwarding local port 5000 to external port 80 (mapped as 1104)
+[2026-01-20 09:44:08 +0000] [22] [INFO] Listening at: http://0.0.0.0:5000 (22)
+[2026-01-20 09:44:08 +0000] [41] [INFO] Booting worker with pid: 41
+2026-01-20T09:46:15Z error: The deployment is failing health checks. This can happen if the application isn't responding, responds with an error, or doesn't respond in time. Health checks are sent to the / endpoint by default and must respond as soon as possible. Make sure that the / endpoint is implemented and returns a 200 status code in a timely manner. Avoid doing expensive or long running operations on the / endpoint, prefer deferring them to a different route. Check the logs for more information.
