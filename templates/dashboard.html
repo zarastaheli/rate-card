@@ -796,6 +796,7 @@
     }
 
     let currentSelection = [];
+    let availableCarriers = [];
     let selectionTimer = null;
     let summaryLoading = false;
 
@@ -816,10 +817,11 @@
     }
 
     async function loadDashboard(selected = null, initial = false, recalculating = false, refresh = false) {
+      const loadingMessage = recalculating ? 'Recalculating...' : 'Loading summary...';
       if (initial) {
         setLoading(true, 'Loading summary...', true);
       } else if (recalculating) {
-        setLoading(true, 'Recalculating...', false);
+        setLoading(true, loadingMessage, false);
       }
       const options = selected
         ? {
@@ -829,53 +831,60 @@
           }
         : {};
       const refreshParam = refresh ? '?refresh=1' : '';
-      const response = await fetch(`/api/dashboard/${jobId}${refreshParam}`, options);
-      const data = await response.json();
-      if (data.error) {
-        alert(data.error);
+      while (true) {
+        const response = await fetch(`/api/dashboard/${jobId}${refreshParam}`, options);
+        const data = await response.json();
+        if (data.error) {
+          alert(data.error);
+          setLoading(false, '', false);
+          return;
+        }
+        if (data.pending || data.summary_pending) {
+          if (!summaryLoading) {
+            summaryLoading = true;
+            setLoading(true, loadingMessage, false);
+            const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+            const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+            availableCarriers = filteredAvailable;
+            currentSelection = filteredSelected;
+            carrierPercentages = data.carrier_percentages || {};
+            renderCarrierBars(filteredAvailable, currentSelection);
+          } else {
+            setLoading(true, loadingMessage, false);
+          }
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+        summaryLoading = false;
+        const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+        const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
+        availableCarriers = filteredAvailable;
+        if (!selected && filteredSelected.length !== (data.selected_carriers || []).length) {
+          await loadDashboard(filteredSelected, false, true, false);
+          return;
+        }
+        annualOrdersMissing = !!data.annual_orders_missing;
+        annualOrdersBanner.classList.toggle('is-hidden', !annualOrdersMissing);
+        const showDiscounts = !data.summary_pending && !!data.show_usps_market_discount;
+        uspsDiscountRow.classList.toggle('is-hidden', !showDiscounts);
+        if (data.show_usps_market_discount) {
+          const pct = Number(data.usps_market_pct_off) * 100;
+          uspsPercentOffInput.value = Number.isFinite(pct) ? pct.toFixed(1).replace(/\.0$/, '') : '5';
+          uspsDollarOffInput.value = Number.isFinite(Number(data.usps_market_dollar_off))
+            ? Number(data.usps_market_dollar_off).toFixed(2).replace(/\.00$/, '')
+            : '0';
+        }
+        currentSelection = filteredSelected;
+        carrierPercentages = data.carrier_percentages || {};
+        renderSummary(data.overall || {});
+        renderCarrierBars(filteredAvailable, currentSelection);
+        const breakdownSection = document.getElementById('breakdown-section');
+        if (breakdownSection) {
+          breakdownSection.classList.remove('is-hidden');
+        }
         setLoading(false, '', false);
         return;
       }
-      if (data.pending || data.summary_pending) {
-        if (!summaryLoading) {
-          summaryLoading = true;
-          setLoading(true, 'Loading summary...', false);
-          const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
-          const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
-          currentSelection = filteredSelected;
-          carrierPercentages = data.carrier_percentages || {};
-          renderCarrierBars(filteredAvailable, currentSelection);
-        }
-        setTimeout(() => loadDashboard(selected, initial, recalculating, false), 2000);
-        return;
-      }
-      summaryLoading = false;
-      const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
-      const filteredSelected = (data.selected_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
-      if (!selected && filteredSelected.length !== (data.selected_carriers || []).length) {
-        await loadDashboard(filteredSelected, false, true, false);
-        return;
-      }
-      annualOrdersMissing = !!data.annual_orders_missing;
-      annualOrdersBanner.classList.toggle('is-hidden', !annualOrdersMissing);
-      const showDiscounts = !data.summary_pending && !!data.show_usps_market_discount;
-      uspsDiscountRow.classList.toggle('is-hidden', !showDiscounts);
-      if (data.show_usps_market_discount) {
-        const pct = Number(data.usps_market_pct_off) * 100;
-        uspsPercentOffInput.value = Number.isFinite(pct) ? pct.toFixed(1).replace(/\.0$/, '') : '5';
-        uspsDollarOffInput.value = Number.isFinite(Number(data.usps_market_dollar_off))
-          ? Number(data.usps_market_dollar_off).toFixed(2).replace(/\.00$/, '')
-          : '0';
-      }
-      currentSelection = filteredSelected;
-      carrierPercentages = data.carrier_percentages || {};
-      renderSummary(data.overall || {});
-      renderCarrierBars(filteredAvailable, currentSelection);
-      const breakdownSection = document.getElementById('breakdown-section');
-      if (breakdownSection) {
-        breakdownSection.classList.remove('is-hidden');
-      }
-      setLoading(false, '', false);
     }
 
     async function loadPerCarrier(refresh = false) {
@@ -884,27 +893,30 @@
       if (breakdownSection) breakdownSection.classList.remove('is-hidden');
       loadingEl.style.display = 'block';
       const refreshParam = refresh ? '&refresh=1' : '';
-      const response = await fetch(`/api/dashboard/${jobId}?per_carrier=1${refreshParam}`);
-      const data = await response.json();
-      if (data.error) {
-        loadingEl.textContent = 'Unable to load carrier breakdown.';
+      while (true) {
+        const response = await fetch(`/api/dashboard/${jobId}?per_carrier=1${refreshParam}`);
+        const data = await response.json();
+        if (data.error) {
+          loadingEl.textContent = 'Unable to load carrier breakdown.';
+          return;
+        }
+        annualOrdersMissing = !!data.annual_orders_missing;
+        annualOrdersBanner.classList.toggle('is-hidden', !annualOrdersMissing);
+        const showDiscounts = !data.pending && !!data.show_usps_market_discount;
+        uspsDiscountRow.classList.toggle('is-hidden', !showDiscounts);
+        if (data.per_carrier_total) {
+          loadingEl.textContent = `Calculating carrier breakdown ${data.per_carrier_count || 0}/${data.per_carrier_total}...`;
+        }
+        if (data.per_carrier && data.per_carrier.length) {
+          renderBreakdown(data.per_carrier);
+        }
+        if (data.pending) {
+          await new Promise(resolve => setTimeout(resolve, 900));
+          continue;
+        }
+        loadingEl.style.display = 'none';
         return;
       }
-      annualOrdersMissing = !!data.annual_orders_missing;
-      annualOrdersBanner.classList.toggle('is-hidden', !annualOrdersMissing);
-      const showDiscounts = !data.pending && !!data.show_usps_market_discount;
-      uspsDiscountRow.classList.toggle('is-hidden', !showDiscounts);
-      if (data.per_carrier_total) {
-        loadingEl.textContent = `Calculating carrier breakdown ${data.per_carrier_count || 0}/${data.per_carrier_total}...`;
-      }
-      if (data.per_carrier && data.per_carrier.length) {
-        renderBreakdown(data.per_carrier);
-      }
-      if (data.pending) {
-        setTimeout(() => loadPerCarrier(refresh), 900);
-        return;
-      }
-      loadingEl.style.display = 'none';
     }
 
     document.addEventListener('click', (event) => {
@@ -912,22 +924,26 @@
       if (!chip || !chip.dataset.carrier) return;
       if (selectionTimer) clearTimeout(selectionTimer);
       selectionTimer = setTimeout(() => {
-        const carriers = Array.from(new Set(
-          Array.from(document.querySelectorAll('.carrier-chip'))
-            .map(el => el.dataset.carrier)
-        ));
-        const selected = Array.from(new Set(
-          Array.from(document.querySelectorAll('.carrier-chip.is-selected'))
-            .map(el => el.dataset.carrier)
-        ));
+        const carriers = availableCarriers.length
+          ? [...availableCarriers]
+          : Array.from(new Set(
+              Array.from(document.querySelectorAll('.carrier-chip'))
+                .map(el => el.dataset.carrier)
+            ));
         const target = chip.dataset.carrier;
-        const nextSelected = selected.includes(target)
-          ? selected.filter(c => c !== target)
-          : [...selected, target];
+        const selectedSet = new Set(currentSelection);
+        if (selectedSet.has(target)) {
+          selectedSet.delete(target);
+        } else {
+          selectedSet.add(target);
+        }
+        const nextSelected = Array.from(selectedSet);
         if (!nextSelected.length) {
           renderCarrierBars(carriers, currentSelection);
           return;
         }
+        currentSelection = nextSelected;
+        renderCarrierBars(carriers, nextSelected);
         loadDashboard(nextSelected, false, true, true).then(async () => {
           await loadPerCarrier(true);
           await refreshDealSizeFromStoredInputs();

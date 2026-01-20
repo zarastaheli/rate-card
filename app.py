@@ -355,12 +355,7 @@ def is_uniuni_zip_eligible(origin_zip):
     return False
 
 def _parse_annual_orders(value):
-    if value is None or value == '':
-        return None
-    try:
-        return float(value)
-    except Exception:
-        return None
+    return _parse_numeric_value(value)
 
 def compute_eligibility(origin_zip, annual_orders, working_days_per_year=None, mapping_config=None):
     zip_eligible_amazon = is_amazon_eligible(origin_zip)
@@ -411,11 +406,62 @@ def _parse_bool(value):
         return False
     return str(value).strip().lower() in {'true', '1', 'yes', 'y'}
 
-def _parse_number(value):
-    try:
+def _parse_numeric_value(value):
+    if value is None or value == '':
+        return None
+    if isinstance(value, (int, float)) and not (isinstance(value, float) and pd.isna(value)):
         return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace(',', '')
+    negative = False
+    if text.startswith('(') and text.endswith(')'):
+        negative = True
+        text = text[1:-1].strip()
+    lowered = text.lower()
+    multiplier = 1
+    if lowered.endswith('%'):
+        lowered = lowered[:-1]
+    if lowered.endswith('k'):
+        multiplier = 1000
+        lowered = lowered[:-1]
+    elif lowered.endswith('m'):
+        multiplier = 1_000_000
+        lowered = lowered[:-1]
+    elif lowered.endswith('b'):
+        multiplier = 1_000_000_000
+        lowered = lowered[:-1]
+    match = re.search(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', lowered)
+    if not match:
+        return None
+    try:
+        number = float(match.group()) * multiplier
     except Exception:
-        return 0.0
+        return None
+    if negative:
+        number = -number
+    return number
+
+def _parse_number(value):
+    parsed = _parse_numeric_value(value)
+    return parsed if parsed is not None else 0.0
+
+def _coerce_numeric_series(series):
+    if series is None:
+        return None
+    if isinstance(series, pd.Series) and series.empty:
+        return series
+    if not isinstance(series, pd.Series):
+        series = pd.Series(series)
+    cleaned = series
+    if cleaned.dtype == object:
+        text = cleaned.astype(str)
+        text = text.str.replace(',', '', regex=False)
+        text = text.str.replace(r'^\((.*)\)$', r'-\1', regex=True)
+        text = text.str.replace(r'[^0-9.+-Ee]', '', regex=True)
+        cleaned = text
+    return pd.to_numeric(cleaned, errors='coerce')
 
 def _saas_tier_name(annual_orders):
     try:
@@ -1683,9 +1729,13 @@ def _mode_or_min(series):
     if series.empty:
         return None
     counts = series.value_counts()
-    if not counts.empty:
-        return float(counts.index[0])
-    return float(series.min())
+    if counts.empty:
+        return None
+    max_count = counts.max()
+    if max_count <= 1:
+        return float(series.min())
+    candidates = counts[counts == max_count].index
+    return float(min(candidates))
 
 def _calculate_all_carriers_batch(job_dir, all_carriers, mapping_config):
     """Calculate metrics for all carriers in a single pass - much faster than per-carrier calls."""
@@ -1755,7 +1805,7 @@ def _calculate_all_carriers_batch(job_dir, all_carriers, mapping_config):
         label_cost = normalized_df.get('LABEL_COST')
     if label_cost is None:
         label_cost = pd.Series([np.nan] * len(normalized_df))
-    label_cost = pd.to_numeric(label_cost, errors='coerce')
+    label_cost = _coerce_numeric_series(label_cost)
 
     work_df = pd.DataFrame({
         'zone': zone,
@@ -1785,7 +1835,8 @@ def _calculate_all_carriers_batch(job_dir, all_carriers, mapping_config):
                 merchant_rate[(zone_val, weight_val)] = rate
     else:
         if controls['g2'] == 'Minimum Rates':
-            merchant_rate = qualified_df.groupby(['zone', 'weight_bucket'])['label_cost'].min()
+            nonzero = qualified_df[qualified_df['label_cost'] > 0]
+            merchant_rate = nonzero.groupby(['zone', 'weight_bucket'])['label_cost'].min()
         else:
             merchant_rate = qualified_df.groupby(['zone', 'weight_bucket'])['label_cost'].apply(_mode_or_min)
 
@@ -2143,7 +2194,8 @@ def _calculate_metrics_fast(job_dir, selected_dashboard, mapping_config):
                 merchant_rate[(zone_val, weight_val)] = rate
     else:
         if controls['g2'] == 'Minimum Rates':
-            merchant_rate = qualified_df.groupby(['zone', 'weight_bucket'])['label_cost'].min()
+            nonzero = qualified_df[qualified_df['label_cost'] > 0]
+            merchant_rate = nonzero.groupby(['zone', 'weight_bucket'])['label_cost'].min()
         else:
             merchant_rate = qualified_df.groupby(['zone', 'weight_bucket'])['label_cost'].apply(_mode_or_min)
 
@@ -2372,7 +2424,8 @@ def _calculate_carrier_details_fast(job_dir, selected_dashboard, mapping_config)
                 merchant_rate[(zone_val, weight_val)] = rate
     else:
         if controls['g2'] == 'Minimum Rates':
-            merchant_rate = qualified_df.groupby(['zone', 'weight_bucket'])['label_cost'].min()
+            nonzero = qualified_df[qualified_df['label_cost'] > 0]
+            merchant_rate = nonzero.groupby(['zone', 'weight_bucket'])['label_cost'].min()
         else:
             merchant_rate = qualified_df.groupby(['zone', 'weight_bucket'])['label_cost'].apply(_mode_or_min)
 
@@ -3288,7 +3341,7 @@ def _avg_label_cost_from_job(job_dir):
         series = df['LABEL_COST']
     if series is None:
         return None
-    numeric = pd.to_numeric(series, errors='coerce')
+    numeric = _coerce_numeric_series(series)
     if numeric.notna().any():
         return float(numeric.mean())
     return None
@@ -5844,10 +5897,10 @@ def update_annual_orders(job_id):
             return jsonify({'error': 'Mapping not found'}), 404
         data = request.json or {}
         annual_orders = data.get('annual_orders')
-        try:
-            annual_orders_value = int(float(annual_orders))
-        except Exception:
+        annual_orders_value = _parse_numeric_value(annual_orders)
+        if annual_orders_value is None:
             return jsonify({'error': 'Invalid annual orders'}), 400
+        annual_orders_value = int(annual_orders_value)
         if annual_orders_value <= 0:
             return jsonify({'error': 'Annual orders must be greater than 0'}), 400
 

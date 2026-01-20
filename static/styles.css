@@ -12,6 +12,7 @@
   --danger-bg: #fff1f2;
   --pill: #eef1f6;
   --link: #2563eb;
+  --ui-scale: 1.07;
 }
 
 * {
@@ -34,10 +35,52 @@ body {
   align-items: center;
 }
 
+body.tight-fit {
+  overflow: hidden;
+}
+
 .page-container {
-  width: 100%;
-  max-width: 1240px;
+  width: calc(100% / var(--ui-scale));
+  max-width: calc(1240px / var(--ui-scale));
   margin: 0 auto;
+  transform: scale(var(--ui-scale));
+  transform-origin: top center;
+}
+
+body.tight-fit .page-container {
+  max-height: calc(100vh - 64px);
+}
+
+body.tight-fit .card--upload {
+  min-height: auto;
+}
+
+body.tight-fit .card-content {
+  gap: 14px;
+}
+
+body.tight-fit .card-body {
+  gap: 12px;
+}
+
+body.tight-fit .breadcrumb {
+  margin-bottom: 20px;
+}
+
+body.tight-fit h1,
+body.tight-fit .loading-title {
+  font-size: 30px;
+  margin-bottom: 6px;
+}
+
+body.tight-fit .subtitle,
+body.tight-fit .loading-subtitle {
+  margin-bottom: 14px;
+}
+
+body.tight-fit .upload-area {
+  padding: 32px;
+  margin: 14px 0 6px;
 }
 
 .card {
@@ -94,6 +137,115 @@ body {
 
 .balanced-body {
   justify-content: space-between;
+}
+
+@media (max-height: 900px) {
+  :root {
+    --ui-scale: 1.05;
+  }
+  body {
+    padding: 16px;
+  }
+
+  body.tight-fit .page-container {
+    max-height: calc(100vh - 32px);
+  }
+
+  .card {
+    padding: 24px;
+  }
+
+  .card--upload {
+    padding: 24px;
+    min-height: auto;
+  }
+
+  .card-content {
+    gap: 14px;
+  }
+
+  .card-body {
+    gap: 12px;
+  }
+
+  .breadcrumb {
+    margin-bottom: 20px;
+  }
+
+  h1,
+  .loading-title {
+    font-size: 28px;
+    margin-bottom: 4px;
+  }
+
+  .subtitle,
+  .loading-subtitle {
+    margin-bottom: 12px;
+  }
+
+  .upload-area {
+    padding: 36px;
+    margin: 12px 0 6px;
+  }
+
+  .form-grid {
+    gap: 12px;
+  }
+
+  .form-field {
+    gap: 6px;
+  }
+
+  .deal-sizing-grid,
+  .deal-sizing-grid--compact,
+  .deal-sizing-grid--inputs,
+  .deal-sizing-grid--carrier-inputs,
+  .deal-sizing-grid--fees,
+  .deal-sizing-grid--mix {
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .deal-sizing-field {
+    gap: 6px;
+  }
+
+  .modal-actions--spread {
+    margin-top: 18px;
+  }
+}
+
+@media (max-height: 820px) {
+  body.tight-fit {
+    --ui-scale: 1.03;
+  }
+
+  body.tight-fit .card {
+    padding: 20px;
+  }
+
+  body.tight-fit .upload-area {
+    padding: 28px;
+  }
+}
+
+@media (max-height: 740px) {
+  body.tight-fit {
+    --ui-scale: 1;
+  }
+
+  body.tight-fit .card {
+    padding: 18px;
+  }
+
+  body.tight-fit h1,
+  body.tight-fit .loading-title {
+    font-size: 26px;
+  }
+
+  body.tight-fit .upload-area {
+    padding: 22px;
+  }
 }
 
 @keyframes cardFade {
@@ -1684,6 +1836,10 @@ h1,
   max-width: none;
 }
 
+body.tight-fit .entry-page {
+  min-height: 0;
+}
+
 .entry-card {
   max-width: 1080px;
   width: 100%;
@@ -1760,7 +1916,8 @@ h1,
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   justify-items: center;
-  width: 100%;
+  width: min(100%, 980px);
+  margin: 0 auto;
   row-gap: 16px;
 }
 
@@ -1931,8 +2088,10 @@ h1,
 }
 
 .entry-body {
-  padding: 0;
-  display: block;
+  padding: 32px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: 100vh;
 }
 
