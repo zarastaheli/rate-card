@@ -835,13 +835,9 @@
         setLoading(false, '', false);
         return;
       }
-      if (data.summary_pending) {
-        if (initial) {
-          setLoading(true, 'Loading summary...', true);
-        } else if (recalculating) {
-          setLoading(true, 'Recalculating...', false);
-        }
-        setTimeout(() => loadDashboard(selected, initial, recalculating, refresh), 700);
+      if (data.pending || data.summary_pending) {
+        setLoading(true, 'Computing summary metrics (this may take up to 2 minutes)...', true);
+        setTimeout(() => loadDashboard(selected, initial, recalculating, true), 1500);
         return;
       }
       const filteredAvailable = (data.available_carriers || []).filter(carrier => !hiddenCarriers.has(carrier));
