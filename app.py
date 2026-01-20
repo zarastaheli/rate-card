@@ -5208,9 +5208,16 @@ def generate():
         with open(progress_file, 'w') as f:
             json.dump(progress_payload, f)
         
+        # Load redo carriers config
+        redo_config = {}
+        redo_file = job_dir / 'redo_carriers.json'
+        if redo_file.exists():
+            with open(redo_file, 'r') as f:
+                redo_config = json.load(f)
+        
         # Pre-compute dashboard metrics SYNCHRONOUSLY (fast ~0.2 seconds)
         try:
-            _precompute_dashboard_metrics(job_dir, mapping_config)
+            _precompute_dashboard_metrics(job_dir, mapping_config, redo_config)
         except Exception as e:
             app.logger.warning(f"Dashboard precompute failed: {e}")
         
@@ -5228,7 +5235,7 @@ def generate():
         return jsonify({
             'success': True, 
             'status': 'dashboard_ready',
-            'redirect': f'/dashboard/{job_id}'
+            'redirect': f'/dashboard?job_id={job_id}'
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
