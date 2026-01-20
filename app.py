@@ -2506,7 +2506,7 @@ def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=
             app.logger.info("Dashboard metrics cached (Power Automate)")
             return True
     
-    # Fast Python-only approach for instant dashboard loading
+    # Fast Python calculations for instant dashboard loading
     app.logger.info("Using fast Python calculations for dashboard metrics")
     
     # Per-carrier metrics via Python (fast)
@@ -2526,6 +2526,28 @@ def _precompute_dashboard_metrics(job_dir, mapping_config, redo_config, timeout=
     
     _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, full_hash)
     app.logger.info("Dashboard metrics cached (Python - instant)")
+    
+    # Start LibreOffice refinement in background (non-blocking)
+    def refine_with_libreoffice():
+        try:
+            app.logger.info("Background: Starting LibreOffice refinement...")
+            recalc_success = _recalculate_excel_with_libreoffice(rate_card_path, timeout=180)
+            if recalc_success:
+                refined_metrics = _read_metrics_from_excel_cells(rate_card_path)
+                if refined_metrics:
+                    # Update cache with accurate values
+                    new_hash = _compute_full_cache_hash(job_dir, mapping_config, redo_config)
+                    summary_by_selection[default_key] = refined_metrics
+                    _write_dashboard_cache(job_dir, carrier_metrics, summary_by_selection, new_hash)
+                    app.logger.info(f"Background: Cache refined with LibreOffice values: {refined_metrics}")
+        except Exception as e:
+            app.logger.error(f"Background LibreOffice refinement failed: {e}")
+    
+    # Run in background thread so dashboard loads immediately
+    import threading
+    thread = threading.Thread(target=refine_with_libreoffice, daemon=True)
+    thread.start()
+    
     return True
 
 def _summary_job_key(job_dir, source_mtime, selection_key):

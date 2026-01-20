@@ -32,29 +32,33 @@ A Flask-based web application for shipping rate card analysis. The app processes
 - Werkzeug - WSGI utilities
 
 ## Dashboard Caching Architecture
-The dashboard uses fast Python calculations for instant loading:
+The dashboard uses progressive loading: fast Python estimates first, then accurate Excel values.
 
 ### Computation Strategy
-- **All metrics**: Computed via Python (instant, ~0.1 second)
-- **Accuracy**: Within ~10% of Excel formula values
-- **Speed priority**: Dashboard loads instantly instead of waiting 2+ minutes
+- **Instant load**: Python calculations (~0.1 second) for immediate display
+- **Background refinement**: LibreOffice recalculates Excel formulas (~2 min, async)
+- **Auto-update**: Cache silently updated with exact values when LibreOffice completes
+- **Result**: Users see estimates immediately, accurate values on next visit
 
 ### Cache Files (per job in `runs/<job_id>/`)
 - `dashboard_breakdown.json` - Pre-computed per-carrier metrics
 - `dashboard_summary.json` - Summary metrics by carrier selection
 
 ### Cache Flow
-1. **On Generate**: Python computes all metrics (~1 second total)
-2. **On Dashboard Load**: Fast JSON read only, instant display
-3. **If Cache Missing**: Return `pending=true`, trigger background computation
+1. **On Generate**: Python computes all metrics instantly (~1 second)
+2. **Background**: LibreOffice refinement starts in async thread
+3. **On Dashboard Load**: Fast JSON read, instant display
+4. **When LibreOffice Done**: Cache updated with accurate Excel values
 
 ### Key Functions
-- `_precompute_dashboard_metrics()` - Python-based fast calculation
+- `_precompute_dashboard_metrics()` - Fast Python + background LibreOffice
 - `_calculate_metrics_fast()` - Core metric calculation using pandas
-- `_read_dashboard_cache()` / `_write_dashboard_cache()` - JSON cache I/O
+- `_recalculate_excel_with_libreoffice()` - Accurate formula evaluation
+- `_read_metrics_from_excel_cells()` - Read summary from Excel cells C5-C12
 
 ### Technical Notes
-- LibreOffice recalculation code exists but is disabled for speed
+- Python estimates are within ~10% of Excel formula values
+- LibreOffice runs in background thread, doesn't block user
 - Power Automate integration exists but requires Microsoft 365 premium license
 
 ## Notes
